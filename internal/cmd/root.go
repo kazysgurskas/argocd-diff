@@ -9,37 +9,38 @@ import (
 	"github.com/kazysgurskas/argocd-diff/internal/version"
 )
 
-// New returns the root command, which diffs two trees of rendered manifests.
-// hydrate, which renders such a tree, is its subcommand. Errors are
-// returned from Execute rather than printed, so the caller reports them
+// New returns the root command, which renders two checkouts and diffs the
+// result. hydrate, which renders one checkout, is its subcommand. Errors
+// are returned from Execute rather than printed, so the caller reports them
 // once.
 func New() *cobra.Command {
 	o := &diffOptions{}
 	root := &cobra.Command{
 		Use:   "argocd-diff",
-		Short: "Diff rendered ArgoCD application manifests",
-		Long: `Compare two trees of rendered manifests, as "argocd-diff hydrate" writes
-them, and write a self-contained HTML report of what changed. Each input is a
-directory or a zip archive of one. With --applications, each input is a
-checkout of the GitOps repository (a directory or zip of one) holding that
-Application file, and both are hydrated first, so one command does the whole
-job.
+		Short: "Diff the manifests ArgoCD Applications render to, between two checkouts",
+		Long: `Render the ArgoCD Applications of two checkouts of a GitOps repository and
+show what changed in the Kubernetes manifests they produce, as a
+self-contained HTML report and a Markdown summary for a pull request comment.
+No ArgoCD instance or cluster is needed.
 
-Pull request details are optional. Inside GitHub Actions the repository, base
-and head refs come from GITHUB_REPOSITORY, GITHUB_BASE_REF and GITHUB_HEAD_REF,
-and the number from GITHUB_REF on pull_request events (refs/pull/<n>/merge) or
-from GITHUB_PR_NUMBER if the workflow exports it, so only --base and --head are
-needed there.`,
-		Example: `  # Hydrate the base and head checkouts of a pull request and diff them
+By default the checkouts are ./base and ./head, each holding its Application
+resources as applications.yaml; source paths in the Applications are resolved
+against their checkout. Pass --no-hydrate to diff two trees that
+"argocd-diff hydrate" rendered earlier.
+
+Inside GitHub Actions the report header is filled from GITHUB_REPOSITORY,
+GITHUB_BASE_REF, GITHUB_HEAD_REF and GITHUB_REF; pass --pr-title and --author
+from the event.`,
+		Example: `  # The pull request's base is checked out in base/, its head in head/, and
+  # the Application resources were rendered into applications.yaml in each
+  argocd-diff --summary diff.md --pr-title "$PR_TITLE" --author "$AUTHOR"
+
+  # Explicit paths, keeping the rendered manifests for other tools to scan
   argocd-diff --base base-checkout --head head-checkout --applications manifests/applications.yaml \
-      --kube-version 1.35.6 --charts-dir charts --rendered rendered --summary diff.md
+      --rendered-dir rendered --report manifest-diff.html --summary manifest-diff.md
 
-  # Or diff two trees rendered earlier with "argocd-diff hydrate"
-  argocd-diff --base base-manifests --head head-manifests
-  argocd-diff --base base-manifests --head head-manifests --summary diff.md
-  argocd-diff --base base.zip --head head.zip --output diff.html \
-      --repo hostinger/kubernetes-apps --pr-number 42 --pr-title "Bump nginx" \
-      --base-ref master --head-ref feat/nginx --author alice`,
+  # Two trees rendered earlier with "argocd-diff hydrate"
+  argocd-diff --no-hydrate --base base-manifests --head head-manifests`,
 		Version:       fmt.Sprintf("%s (commit %s, built %s)", version.Version, version.GitCommit, version.BuildDate),
 		SilenceUsage:  true,
 		SilenceErrors: true,

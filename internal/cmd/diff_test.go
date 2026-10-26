@@ -66,9 +66,9 @@ func TestApplicationsOf(t *testing.T) {
 	}
 }
 
-// TestRootDiffsTwoTrees pins the root command's job: argocd-diff with
-// --base and --head writes the report and the summary.
-func TestRootDiffsTwoTrees(t *testing.T) {
+// TestRootDiffsRenderedTrees pins --no-hydrate: two trees rendered earlier
+// are diffed as they are, into the report and the summary.
+func TestRootDiffsRenderedTrees(t *testing.T) {
 	dir := t.TempDir()
 	for side, replicas := range map[string]string{"base": "1", "head": "2"} {
 		path := filepath.Join(dir, side, "web.stage.c1", "shop", "Deployment", "web.yaml")
@@ -84,7 +84,7 @@ func TestRootDiffsTwoTrees(t *testing.T) {
 
 	root := New()
 	root.SetOut(io.Discard)
-	root.SetArgs([]string{"--base", filepath.Join(dir, "base"), "--head", filepath.Join(dir, "head"), "--output", html, "--summary", summary})
+	root.SetArgs([]string{"--no-hydrate", "--base", filepath.Join(dir, "base"), "--head", filepath.Join(dir, "head"), "--report", html, "--summary", summary})
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -104,12 +104,18 @@ func TestRootDiffsTwoTrees(t *testing.T) {
 	}
 }
 
-func TestRootRequiresBaseAndHead(t *testing.T) {
+// TestRootHintsNoHydrate pins the error for a rendered tree given without
+// --no-hydrate: it names the flag.
+func TestRootHintsNoHydrate(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "base", "app", "Kind", "x.yaml"), "kind: Kind\n")
+	writeFile(t, filepath.Join(dir, "head", "app", "Kind", "x.yaml"), "kind: Kind\n")
 	root := New()
 	root.SetOut(io.Discard)
-	root.SetArgs(nil)
-	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "required flag") {
-		t.Errorf("want a required-flag error, got %v", err)
+	root.SetArgs([]string{"--base", filepath.Join(dir, "base"), "--head", filepath.Join(dir, "head"), "--report", filepath.Join(dir, "diff.html")})
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "--no-hydrate") {
+		t.Errorf("want an error that names --no-hydrate, got %v", err)
 	}
 }
 
@@ -144,7 +150,7 @@ func TestRootHydratesAndDiffsCheckouts(t *testing.T) {
 	root := New()
 	root.SetOut(io.Discard)
 	root.SetArgs([]string{"--base", filepath.Join(dir, "base"), "--head", filepath.Join(dir, "head"),
-		"--applications", "manifests/applications.yaml", "--rendered", rendered, "--output", html, "--summary", summary})
+		"--applications", "manifests/applications.yaml", "--rendered-dir", rendered, "--report", html, "--summary", summary})
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -175,9 +181,59 @@ func TestRootHydratesAndDiffsCheckouts(t *testing.T) {
 func TestRootRefusesPerTreeApplicationsWhenHydrating(t *testing.T) {
 	root := New()
 	root.SetOut(io.Discard)
-	root.SetArgs([]string{"--base", t.TempDir(), "--head", t.TempDir(),
-		"--applications", "manifests/applications.yaml", "--head-applications", "x.yaml"})
-	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "head-applications") {
-		t.Errorf("want a mutually exclusive flags error, got %v", err)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"--base", t.TempDir(), "--head", t.TempDir(), "--head-applications", "x.yaml"})
+	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "--no-hydrate") {
+		t.Errorf("want an error that says the flag needs --no-hydrate, got %v", err)
+	}
+}
+
+// TestRootDefaultsToBaseAndHead pins the bare invocation: base/ and head/ in
+// the working directory, each with applications.yaml.
+func TestRootDefaultsToBaseAndHead(t *testing.T) {
+	dir := t.TempDir()
+	for side, replicas := range map[string]string{"base": "1", "head": "2"} {
+		writeFile(t, filepath.Join(dir, side, "apps", "web", "deployment.yaml"),
+			"apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\n  namespace: shop\nspec:\n  replicas: "+replicas+"\n")
+		writeFile(t, filepath.Join(dir, side, "applications.yaml"),
+			"apiVersion: argoproj.io/v1alpha1\nkind: Application\nmetadata:\n  name: web\nspec:\n  destination:\n    namespace: shop\n  source:\n    repoURL: https://github.com/example/gitops\n    path: apps/web\n    directory: {}\n")
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(wd) }()
+
+	root := New()
+	root.SetOut(io.Discard)
+	root.SetArgs([]string{"--summary", "diff.md"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"diff.html", "diff.md"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Error(err)
+		}
+	}
+}
+
+// TestDeprecatedFlagsStillWork pins that the 1.0 names keep working.
+func TestDeprecatedFlagsStillWork(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "base", "app", "Kind", "x.yaml"), "kind: Kind\nmetadata:\n  name: x\n")
+	writeFile(t, filepath.Join(dir, "head", "app", "Kind", "x.yaml"), "kind: Kind\nmetadata:\n  name: y\n")
+	html := filepath.Join(dir, "old-name.html")
+	root := New()
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"--no-hydrate", "--base", filepath.Join(dir, "base"), "--head", filepath.Join(dir, "head"), "--output", html})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(html); err != nil {
+		t.Error(err)
 	}
 }

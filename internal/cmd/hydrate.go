@@ -19,7 +19,7 @@ const defaultChartsDir = "cache"
 
 type hydrateOptions struct {
 	applications string
-	output       string
+	renderedDir  string
 	chartsDir    string
 	kubeVersion  string
 }
@@ -29,13 +29,15 @@ func newHydrateCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "hydrate",
 		Short: "Render ArgoCD applications into Kubernetes manifests",
-		Long: `Render ArgoCD Application resources into the Kubernetes manifests they would
-deploy. Helm chart sources are pulled and templated, directory sources are read
-as they are, and Secret values are redacted. Each application is written to
-<output>/<application>/<namespace>/<Kind>/<name>.yaml, or
-<output>/<application>/<Kind>/<name>.yaml for a cluster-scoped object.`,
+		Long: `Render the ArgoCD Applications of one checkout into the Kubernetes manifests
+they would deploy, without an ArgoCD instance. Helm chart sources are pulled
+and templated, directory sources are read as they are, and Secret values are
+redacted. Source paths in the Applications are relative to the working
+directory, so run it from the checkout. Each application is written to
+<rendered-dir>/<application>/<namespace>/<Kind>/<name>.yaml, or
+<rendered-dir>/<application>/<Kind>/<name>.yaml for a cluster-scoped object.`,
 		Example: `  argocd-diff hydrate
-  argocd-diff hydrate --applications apps/applications.yaml --output rendered --kube-version 1.35.6`,
+  argocd-diff hydrate --applications manifests/applications.yaml --rendered-dir rendered --kube-version 1.35.6`,
 		RunE: func(*cobra.Command, []string) error {
 			return runHydrate(o)
 		},
@@ -46,18 +48,19 @@ as they are, and Secret values are redacted. Each application is written to
 
 func addHydrateFlags(cmd *cobra.Command, o *hydrateOptions) {
 	f := cmd.Flags()
-	f.StringVar(&o.applications, "applications", "manifests/applications.yaml",
-		"Path to the file containing ArgoCD Application CRDs")
-	f.StringVar(&o.output, "output", "manifests",
-		"Output directory for the rendered manifests")
-	f.StringVar(&o.chartsDir, "charts-dir", defaultChartsDir,
-		"Directory for storing downloaded Helm charts")
-	f.StringVar(&o.kubeVersion, "kube-version", helm.DefaultKubeVersion,
-		"Kubernetes version to use for rendering Helm charts")
+	f.SortFlags = false
+	f.StringVar(&o.applications, "applications", "applications.yaml", "ArgoCD Application file to render")
+	f.StringVar(&o.renderedDir, "rendered-dir", "rendered", "Directory to write the rendered manifests to")
+	f.StringVar(&o.kubeVersion, "kube-version", helm.DefaultKubeVersion, "Kubernetes version to render Helm charts for")
+	f.StringVar(&o.chartsDir, "charts-dir", defaultChartsDir, "Directory pulled Helm charts are kept in between runs")
+
+	// The 1.0 name; deprecated, so it still works, warns, and is hidden.
+	f.StringVar(&o.renderedDir, "output", "rendered", "")
+	_ = f.MarkDeprecated("output", "use --rendered-dir")
 }
 
 func runHydrate(o *hydrateOptions) error {
-	_, err := hydrateTree(o.applications, o.output, hydrate.Options{ChartsDir: o.chartsDir, KubeVersion: o.kubeVersion})
+	_, err := hydrateTree(o.applications, o.renderedDir, hydrate.Options{ChartsDir: o.chartsDir, KubeVersion: o.kubeVersion})
 	return err
 }
 

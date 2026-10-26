@@ -19,7 +19,7 @@ fi
 out=out/$(basename "$example")
 rm -rf "$out" && mkdir -p "$out"
 "$bin" --base "$example/base" --head "$example/head" --applications applications.yaml \
-  --charts-dir cache --rendered "$out" --output "$out/diff.html" --summary "$out/diff.md" \
+  --charts-dir cache --rendered-dir "$out" --report "$out/diff.html" --summary "$out/diff.md" \
   --repo example/gitops --pr-number 1 --pr-title "Ingress to Gateway API migration" \
   --base-ref main --head-ref feature/gateway-api --author smoke
 echo "open $(pwd)/$out/diff.html"

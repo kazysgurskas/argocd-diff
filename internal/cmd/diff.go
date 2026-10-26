@@ -19,52 +19,65 @@ import (
 )
 
 type diffOptions struct {
-	base, head, output string
-	summary            string
-	baseApplications   string
-	headApplications   string
-	// applications, when set, means base and head are checkouts holding
-	// this Application file, to hydrate before diffing.
-	applications  string
-	rendered      string
-	chartsDir     string
-	kubeVersion   string
-	context       int
-	fullTextLimit int
-	meta          report.Meta
+	base, head   string
+	applications string
+	// noHydrate means base and head are rendered trees, not checkouts.
+	noHydrate   bool
+	kubeVersion string
+	chartsDir   string
+	renderedDir string
+	report      string
+	summary     string
+	// baseApplications and headApplications are the deprecated way to name
+	// the Application files of rendered trees.
+	baseApplications string
+	headApplications string
+	context          int
+	fullTextLimit    int
+	meta             report.Meta
 }
 
+// addDiffFlags binds the root command's flags in the order help shows them:
+// inputs, hydration, outputs, then the report header.
 func addDiffFlags(cmd *cobra.Command, o *diffOptions) {
 	f := cmd.Flags()
-	f.StringVar(&o.base, "base", "", "Base manifest tree: a directory or a .zip (required)")
-	f.StringVar(&o.head, "head", "", "Head manifest tree: a directory or a .zip (required)")
-	f.StringVar(&o.output, "output", "diff.html", "Output HTML file")
-	f.StringVar(&o.summary, "summary", "", "Also write a Markdown summary, for a pull request comment, to this file")
-	f.StringVar(&o.baseApplications, "base-applications", "", "ArgoCD Application resources of the base tree, for project and cluster labels (default: applications.yaml in the base tree, if present)")
-	f.StringVar(&o.headApplications, "head-applications", "", "ArgoCD Application resources of the head tree (default: applications.yaml in the head tree, if present)")
-	f.StringVar(&o.applications, "applications", "",
-		"Path, inside each tree, of the ArgoCD Application file; each tree is then a checkout of the repository, hydrated before diffing, rather than rendered manifests")
-	f.StringVar(&o.rendered, "rendered", "",
-		"With --applications, keep the rendered trees in this directory, replacing its base/ and head/ (default: a temporary directory)")
-	f.StringVar(&o.chartsDir, "charts-dir", defaultChartsDir, "With --applications, directory for storing downloaded Helm charts")
-	f.StringVar(&o.kubeVersion, "kube-version", helm.DefaultKubeVersion, "With --applications, Kubernetes version to use for rendering Helm charts")
-	f.IntVar(&o.context, "context", diff.DefaultContext, "Unchanged lines kept around each change")
+	f.SortFlags = false
+	f.StringVar(&o.base, "base", "base", "Base checkout of the GitOps repository: a directory or a .zip of one")
+	f.StringVar(&o.head, "head", "head", "Head checkout of the GitOps repository: a directory or a .zip of one")
+	f.StringVar(&o.applications, "applications", "applications.yaml",
+		"ArgoCD Application file inside each checkout, as \"helm template\" of an app-of-apps chart writes it")
+	f.BoolVar(&o.noHydrate, "no-hydrate", false,
+		"Base and head are already rendered manifest trees, as \"argocd-diff hydrate\" writes them; diff them as they are")
+	f.StringVar(&o.kubeVersion, "kube-version", helm.DefaultKubeVersion, "Kubernetes version to render Helm charts for")
+	f.StringVar(&o.chartsDir, "charts-dir", defaultChartsDir, "Directory pulled Helm charts are kept in between runs")
+	f.StringVar(&o.renderedDir, "rendered-dir", "",
+		"Keep the rendered manifests of both sides here, as base/ and head/, for other tools to scan (default: a temporary directory)")
+	f.StringVar(&o.report, "report", "diff.html", "HTML report to write")
+	f.StringVar(&o.summary, "summary", "", "Markdown summary to write, for a pull request comment (default: none)")
+	f.IntVar(&o.context, "context", diff.DefaultContext, "Unchanged lines the report keeps around each change")
 	f.IntVar(&o.fullTextLimit, "full-text-limit", diff.DefaultFullTextLimit,
-		"Largest modified file, in lines, whose full text is embedded so context can be expanded in the viewer (-1: never)")
-	f.StringVar(&o.meta.Title, "title", "", "Report title (default: the pull request, or the input paths)")
-	f.StringVar(&o.meta.Repo, "repo", envOr("GITHUB_REPOSITORY", ""), "Repository as owner/name")
-	f.IntVar(&o.meta.PRNumber, "pr-number", prNumberFromEnv(), "Pull request number")
-	f.StringVar(&o.meta.PRTitle, "pr-title", "", "Pull request title")
-	f.StringVar(&o.meta.BaseRef, "base-ref", envOr("GITHUB_BASE_REF", ""), "Base branch or ref")
-	f.StringVar(&o.meta.HeadRef, "head-ref", envOr("GITHUB_HEAD_REF", ""), "Head branch or ref")
-	f.StringVar(&o.meta.Author, "author", "", "Pull request author")
-	f.StringVar(&o.meta.PRURL, "pr-url", "", "Pull request URL (default: derived from --repo and --pr-number on github.com)")
-	_ = cmd.MarkFlagRequired("base")
-	_ = cmd.MarkFlagRequired("head")
-	// With --applications the labels come from the Applications being
-	// hydrated, so the per-tree files would be silently ignored.
-	cmd.MarkFlagsMutuallyExclusive("applications", "base-applications")
-	cmd.MarkFlagsMutuallyExclusive("applications", "head-applications")
+		"Largest modified file, in lines, whose whole text the report embeds so context can be expanded (-1: never)")
+	f.StringVar(&o.meta.Title, "title", "", "Title of the report (default: \"<repo> #<pr-number>\", or the two paths)")
+	f.StringVar(&o.meta.Repo, "repo", envOr("GITHUB_REPOSITORY", ""),
+		"Repository as owner/name, shown in the report header (default: $GITHUB_REPOSITORY)")
+	f.IntVar(&o.meta.PRNumber, "pr-number", prNumberFromEnv(),
+		"Pull request number, shown in the report header (default: from $GITHUB_REF or $GITHUB_PR_NUMBER)")
+	f.StringVar(&o.meta.PRTitle, "pr-title", "", "Pull request title, shown in the report header")
+	f.StringVar(&o.meta.PRURL, "pr-url", "", "Link from the report header to the pull request (default: github.com/<repo>/pull/<pr-number>)")
+	f.StringVar(&o.meta.BaseRef, "base-ref", envOr("GITHUB_BASE_REF", ""), "Base branch, shown in the report header (default: $GITHUB_BASE_REF)")
+	f.StringVar(&o.meta.HeadRef, "head-ref", envOr("GITHUB_HEAD_REF", ""), "Head branch, shown in the report header (default: $GITHUB_HEAD_REF)")
+	f.StringVar(&o.meta.Author, "author", "", "Pull request author, shown in the report header")
+
+	// The 1.0 names. A deprecated flag still works, warns, and is hidden
+	// from help.
+	f.StringVar(&o.report, "output", "diff.html", "")
+	_ = f.MarkDeprecated("output", "use --report")
+	f.StringVar(&o.renderedDir, "rendered", "", "")
+	_ = f.MarkDeprecated("rendered", "use --rendered-dir")
+	f.StringVar(&o.baseApplications, "base-applications", "", "")
+	_ = f.MarkDeprecated("base-applications", "put applications.yaml at the root of the base tree")
+	f.StringVar(&o.headApplications, "head-applications", "", "")
+	_ = f.MarkDeprecated("head-applications", "put applications.yaml at the root of the head tree")
 }
 
 func runDiff(cmd *cobra.Command, o *diffOptions) error {
@@ -80,13 +93,16 @@ func runDiff(cmd *cobra.Command, o *diffOptions) error {
 	defer cleanupHead()
 
 	var apps diff.Applications
-	if o.applications == "" {
+	if o.noHydrate {
 		apps, err = applicationsOf(baseDir, o.baseApplications, headDir, o.headApplications)
 		if err != nil {
 			return err
 		}
 	} else {
-		rendered := o.rendered
+		if o.baseApplications != "" || o.headApplications != "" {
+			return errors.New("--base-applications and --head-applications apply only with --no-hydrate; hydrated trees are labelled from the Applications they are rendered from")
+		}
+		rendered := o.renderedDir
 		if rendered == "" {
 			if rendered, err = os.MkdirTemp("", "argocd-diff-"); err != nil {
 				return err
@@ -122,9 +138,9 @@ func runDiff(cmd *cobra.Command, o *diffOptions) error {
 		o.meta.PRURL = fmt.Sprintf("https://github.com/%s/pull/%d", o.meta.Repo, o.meta.PRNumber)
 	}
 
-	out, err := os.Create(o.output)
+	out, err := os.Create(o.report)
 	if err != nil {
-		return fmt.Errorf("create %s: %w", o.output, err)
+		return fmt.Errorf("create %s: %w", o.report, err)
 	}
 	defer func() { _ = out.Close() }()
 	if err := report.Render(out, result, o.meta); err != nil {
@@ -137,7 +153,7 @@ func runDiff(cmd *cobra.Command, o *diffOptions) error {
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Wrote %s: %d files changed (%d added, %d modified, %d deleted), +%d -%d\n",
-		o.output, len(result.Files), result.Added, result.Modified, result.Deleted, result.Additions, result.Deletions)
+		o.report, len(result.Files), result.Added, result.Modified, result.Deleted, result.Additions, result.Deletions)
 	return nil
 }
 
@@ -160,20 +176,24 @@ func writeSummary(path string, result *diff.Result) error {
 // to the checkout at root, into out, replacing whatever an earlier run left
 // there, and returns out with the index of what it rendered.
 func hydrateSide(root, out, applications string, opts hydrate.Options) (string, diff.Applications, error) {
+	file := filepath.Join(root, applications)
+	if _, err := os.Stat(file); errors.Is(err, os.ErrNotExist) {
+		return "", nil, fmt.Errorf("%s has no %s; if it is a rendered tree rather than a checkout, pass --no-hydrate", root, applications)
+	}
 	if err := os.RemoveAll(out); err != nil {
 		return "", nil, err
 	}
 	opts.Root = root
-	apps, err := hydrateTree(filepath.Join(root, applications), out, opts)
+	apps, err := hydrateTree(file, out, opts)
 	if err != nil {
 		return "", nil, err
 	}
 	return out, diff.IndexApplications(apps), nil
 }
 
-// applicationsOf reads the Application resources of both trees: the given
-// files, or applications.yaml at each tree root when it exists. Head wins
-// where both trees define the same Application.
+// applicationsOf reads the Application resources of both rendered trees: the
+// given files, or applications.yaml at each tree root when it exists. Head
+// wins where both trees define the same Application.
 func applicationsOf(baseDir, basePath, headDir, headPath string) (diff.Applications, error) {
 	apps := diff.Applications{}
 	for _, tree := range []struct{ dir, path string }{{baseDir, basePath}, {headDir, headPath}} {

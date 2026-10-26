@@ -54,7 +54,7 @@ func TestHydrateWritesManifestTree(t *testing.T) {
 	out := filepath.Join(dir, "out")
 
 	root := New()
-	root.SetArgs([]string{"hydrate", "--applications", applications, "--output", out})
+	root.SetArgs([]string{"hydrate", "--applications", applications, "--rendered-dir", out})
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestHydrateWritesManifestTree(t *testing.T) {
 
 func TestHydrateMissingApplicationsFileIsAnError(t *testing.T) {
 	root := New()
-	root.SetArgs([]string{"hydrate", "--applications", filepath.Join(t.TempDir(), "missing.yaml"), "--output", t.TempDir()})
+	root.SetArgs([]string{"hydrate", "--applications", filepath.Join(t.TempDir(), "missing.yaml"), "--rendered-dir", t.TempDir()})
 	err := root.Execute()
 	if err == nil || !strings.HasPrefix(err.Error(), "load applications: ") {
 		t.Errorf("want a wrapped load error, got %v", err)

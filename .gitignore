@@ -31,3 +31,4 @@ bin/
 test/smoke/out/
 test/smoke/cache/
 test/smoke/local/
+.DS_Store
