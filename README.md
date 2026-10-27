@@ -291,8 +291,8 @@ If you pin the action to a commit SHA, tell it which release to install:
 Then publish `diff.html` somewhere reviewers can open it (e.g. a workflow artifact
 or object storage) and post `diff.md` as a PR comment.
   
-For a complete working example, see the workflow in
-[argocd-gitops-example](https://github.com/kazysgurskas/argocd-gitops-example).
+For a complete example, see the workflow in
+[docs/gitops-workflow.md](docs/gitops-workflow.md).
  
 ## Smoke test
  
