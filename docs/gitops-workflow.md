@@ -99,7 +99,8 @@ jobs:
 
       # Private charts live in a cloud registry. Authenticate with OIDC and
       # register the credential helper, so argocd-diff can pull them the way
-      # helm pull would. Drop these steps if all your charts are public.
+      # helm pull would. The same credentials upload the report further down;
+      # drop only the credential helper if all your charts are public.
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v3
 
@@ -192,13 +193,10 @@ jobs:
 
       # The report is one self-contained HTML file, so any static host will
       # do. Here it goes to a private bucket and the comment links to it with
-      # a signed URL that expires. Signing needs a service account key, which
-      # is why this step authenticates again.
-      - name: Authenticate to Google Cloud for signing
-        uses: google-github-actions/auth@v3
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
-
+      # a signed URL that expires. The OIDC credentials from above cannot
+      # sign, so the URL is signed by a service account through the IAM
+      # signBlob API: no key to store, and the workflow's identity only needs
+      # roles/iam.serviceAccountTokenCreator on that account.
       - name: Upload the report and sign a link to it
         id: upload
         env:
@@ -210,7 +208,7 @@ jobs:
           url=$(gcloud storage sign-url "gs://example-manifest-diffs/${name}" \
             --region=REGION \
             --duration=7d \
-            --private-key-file="$GOOGLE_GHA_CREDS_PATH" \
+            --impersonate-service-account=report-signer@example-project.iam.gserviceaccount.com \
             --format="value(signed_url)")
           echo "url=${url}" >> "$GITHUB_OUTPUT"
           echo "expires=$(date -u -d '+7 days' +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
@@ -270,8 +268,8 @@ and let argocd-diff report no changes for the rest.
 event is the pull request merged into its base as GitHub would merge it, so
 the diff shows what merging would change, not what the branch differs by.
 
-**Private registries** are the only thing that needs credentials. argocd-diff
-pulls charts through the Helm SDK, so whatever works for `helm pull` works
+**Private registries** are the only thing argocd-diff needs credentials for.
+It pulls charts through the Helm SDK, so whatever works for `helm pull` works
 here: a Docker credential helper, as above, or `helm registry login`. Nothing
 talks to ArgoCD or to a cluster.
 
@@ -283,7 +281,8 @@ exits.
 works too and needs no cloud account: upload `manifest-diff.html` with
 `actions/upload-artifact` and link `steps.<id>.outputs.artifact-url` in the
 comment. The bucket and signed URL give reviewers a page that opens in the
-browser rather than a zip to download. The workflow in
+browser rather than a zip to download. Signing by impersonation means no
+service account key sits in the repository secrets. The workflow in
 [argocd-gitops-example](https://github.com/kazysgurskas/argocd-gitops-example)
 takes the artifact route.
 
