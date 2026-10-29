@@ -98,6 +98,30 @@ func (app *Application) Sources() []*Source {
 	return app.Spec.Sources
 }
 
+// ValuesRepoURL is the repository of the source that lends its files to the
+// others (ref: values), which is the GitOps repository the Application is
+// rendered from. It is empty when the Application has no such source.
+func (app *Application) ValuesRepoURL() string {
+	for _, source := range app.Sources() {
+		if source.IsValuesRef() {
+			return source.RepoURL
+		}
+	}
+	return ""
+}
+
+// SameRepoURL reports whether two URLs name the same repository, ignoring
+// case, surrounding space, a trailing slash and a .git suffix.
+func SameRepoURL(a, b string) bool {
+	return repoURLKey(a) == repoURLKey(b)
+}
+
+func repoURLKey(url string) string {
+	url = strings.ToLower(strings.TrimSpace(url))
+	url = strings.TrimSuffix(url, "/")
+	return strings.TrimSuffix(url, ".git")
+}
+
 // IsValuesRef reports whether the source only lends its files to other
 // sources under $values and renders nothing itself.
 func (s *Source) IsValuesRef() bool {

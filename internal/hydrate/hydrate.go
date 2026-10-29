@@ -5,6 +5,7 @@ package hydrate
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/kazysgurskas/argocd-diff/internal/application"
 )
@@ -23,9 +24,14 @@ type Options struct {
 
 // Render renders every source of app and returns the manifests in source
 // order. A source that only lends values to the others (ref: values)
-// renders nothing.
+// renders nothing. Directory sources are read from the checkout at
+// opts.Root, which holds the values source's repository: a directory source
+// from any other repository is not there, so it is skipped with a warning.
+// An Application without a values source has every directory source read
+// from the checkout.
 func Render(app application.Application, opts Options) ([]Manifest, error) {
 	namespace := app.Namespace()
+	valuesRepoURL := app.ValuesRepoURL()
 	var manifests []Manifest
 	for _, source := range app.Sources() {
 		var stream string
@@ -36,6 +42,10 @@ func Render(app application.Application, opts Options) ([]Manifest, error) {
 		case source.IsChart():
 			stream, err = renderChart(source, source.ReleaseName(app.Metadata.Name), namespace, opts)
 		case source.IsDirectory():
+			if valuesRepoURL != "" && !application.SameRepoURL(source.RepoURL, valuesRepoURL) {
+				slog.Warn("skipping directory source from another repository", "application", app.Metadata.Name, "repo", source.RepoURL, "path", source.Path)
+				continue
+			}
 			stream, err = renderDirectory(source, opts)
 		default:
 			return nil, fmt.Errorf("source %s sets neither chart nor directory", source.RepoURL)

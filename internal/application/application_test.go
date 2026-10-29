@@ -100,6 +100,47 @@ func TestSourcesSingleOrMany(t *testing.T) {
 	}
 }
 
+func TestValuesRepoURL(t *testing.T) {
+	var app Application
+	if got := app.ValuesRepoURL(); got != "" {
+		t.Errorf("ValuesRepoURL() = %q for an application without sources", got)
+	}
+	app.Spec.Sources = []*Source{
+		{RepoURL: "https://charts.example.com", Chart: "web"},
+		{RepoURL: "https://github.com/example/gitops", Ref: "values"},
+	}
+	if got := app.ValuesRepoURL(); got != "https://github.com/example/gitops" {
+		t.Errorf("ValuesRepoURL() = %q, want the values source's repository", got)
+	}
+	app.Spec.Source = &Source{RepoURL: "https://github.com/example/gitops", Path: "apps/web", Directory: &DirectorySource{}}
+	if got := app.ValuesRepoURL(); got != "" {
+		t.Errorf("ValuesRepoURL() = %q for a single directory source", got)
+	}
+}
+
+func TestSameRepoURL(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b string
+		want bool
+	}{
+		{"equal", "https://github.com/example/gitops", "https://github.com/example/gitops", true},
+		{"case", "https://github.com/Example/GitOps", "https://github.com/example/gitops", true},
+		{"git suffix", "https://github.com/example/gitops.git", "https://github.com/example/gitops", true},
+		{"trailing slash", "https://github.com/example/gitops/", "https://github.com/example/gitops", true},
+		{"space", " https://github.com/example/gitops\n", "https://github.com/example/gitops", true},
+		{"other repository", "https://github.com/example/ip-lists", "https://github.com/example/gitops", false},
+		{"other host", "https://gitlab.com/example/gitops", "https://github.com/example/gitops", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := SameRepoURL(tt.a, tt.b); got != tt.want {
+				t.Errorf("SameRepoURL(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSourceKinds(t *testing.T) {
 	tests := []struct {
 		name                        string

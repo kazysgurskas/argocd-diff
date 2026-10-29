@@ -75,7 +75,10 @@ This writes the report to `diff.html` and the summary to `diff.md`.
 A few things worth knowing:
  
 - **Paths:** source paths in your Applications (`path:`, `$values/…`) are
-  resolved relative to the checkout they come from.
+  resolved relative to the checkout they come from. A directory source that
+  points at a repository other than the one the `ref: values` source names
+  isn't in that checkout, so it's skipped with a warning and its manifests
+  don't appear in the diff.
 - **Changing inputs and outputs:** use `--base`, `--head` and
   `--applications` for the inputs, and `--report` and `--summary` for the
   outputs.

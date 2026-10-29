@@ -1,6 +1,8 @@
 package hydrate
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,6 +89,58 @@ func TestRenderSkipsValuesRefAndRejectsBareSource(t *testing.T) {
 	app.Spec.Sources = append(app.Spec.Sources, &application.Source{RepoURL: "https://github.com/example/gitops", Path: "apps/web"})
 	if _, err := Render(app, Options{}); err == nil {
 		t.Error("a source with neither chart nor directory must be refused")
+	}
+}
+
+// TestRenderSkipsDirectorySourceFromAnotherRepository pins that a directory
+// source from a repository other than the values source's is not looked for
+// in the checkout: it is skipped with a warning and the other sources still
+// render. The repository is matched ignoring case and a .git suffix.
+func TestRenderSkipsDirectorySourceFromAnotherRepository(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"apps/web/a.yaml": "kind: ConfigMap\nmetadata:\n  name: a\n"})
+	var app application.Application
+	app.Metadata.Name = "web"
+	app.Spec.Sources = []*application.Source{
+		{RepoURL: "https://github.com/example/ip-lists", Path: "kubernetes", Directory: &application.DirectorySource{}},
+		{RepoURL: "https://github.com/Example/gitops.git", Path: "apps/web", Directory: &application.DirectorySource{}},
+		{RepoURL: "https://github.com/example/gitops", Ref: "values"},
+	}
+
+	var logs bytes.Buffer
+	defer slog.SetDefault(slog.Default())
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+
+	manifests, err := Render(app, Options{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifests) != 1 || manifests[0].Name != "a" {
+		t.Errorf("manifests = %+v", manifests)
+	}
+	for _, want := range []string{"level=WARN", "application=web", "repo=https://github.com/example/ip-lists", "path=kubernetes"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("log lacks %q:\n%s", want, logs.String())
+		}
+	}
+}
+
+// TestRenderReadsDirectorySourcesWithoutValuesSource pins that an
+// Application with no values source, such as one rendered from a hydrated
+// branch, has every directory source read from the checkout, whatever its
+// repository.
+func TestRenderReadsDirectorySourcesWithoutValuesSource(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"apps/web/a.yaml": "kind: ConfigMap\nmetadata:\n  name: a\n"})
+	var app application.Application
+	app.Metadata.Name = "web"
+	app.Spec.Source = &application.Source{RepoURL: "https://github.com/example/ip-lists", Path: "apps/web", Directory: &application.DirectorySource{}}
+	manifests, err := Render(app, Options{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifests) != 1 || manifests[0].Name != "a" {
+		t.Errorf("manifests = %+v", manifests)
 	}
 }
 
