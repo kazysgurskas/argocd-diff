@@ -69,7 +69,7 @@ func TestRenderDirectoryRejectsFile(t *testing.T) {
 	}
 }
 
-func TestRenderSkipsValuesRefAndRejectsBareSource(t *testing.T) {
+func TestRenderSkipsUnknownSources(t *testing.T) {
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{"a.yaml": "kind: ConfigMap\nmetadata:\n  name: a\n"})
 	var app application.Application
@@ -77,6 +77,7 @@ func TestRenderSkipsValuesRefAndRejectsBareSource(t *testing.T) {
 	app.Spec.Sources = []*application.Source{
 		{RepoURL: "https://github.com/example/gitops", Ref: "values"},
 		{RepoURL: "https://github.com/example/gitops", Path: root, Directory: &application.DirectorySource{}},
+		{RepoURL: "https://github.com/example/gitops", Path: "apps/web"},
 	}
 	manifests, err := Render(app, Options{})
 	if err != nil {
@@ -84,11 +85,6 @@ func TestRenderSkipsValuesRefAndRejectsBareSource(t *testing.T) {
 	}
 	if len(manifests) != 1 || manifests[0].Name != "a" {
 		t.Errorf("manifests = %+v", manifests)
-	}
-
-	app.Spec.Sources = append(app.Spec.Sources, &application.Source{RepoURL: "https://github.com/example/gitops", Path: "apps/web"})
-	if _, err := Render(app, Options{}); err == nil {
-		t.Error("a source with neither chart nor directory must be refused")
 	}
 }
 

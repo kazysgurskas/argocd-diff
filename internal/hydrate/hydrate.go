@@ -4,7 +4,6 @@
 package hydrate
 
 import (
-	"fmt"
 	"log/slog"
 
 	"github.com/kazysgurskas/argocd-diff/internal/application"
@@ -36,19 +35,25 @@ func Render(app application.Application, opts Options) ([]Manifest, error) {
 	for _, source := range app.Sources() {
 		var stream string
 		var err error
-		switch {
-		case source.IsValuesRef():
-			continue
-		case source.IsChart():
+		kind, err := source.Kind()
+		if err != nil {
+			return nil, err
+		}
+		switch kind {
+		case application.SourceKindChart:
 			stream, err = renderChart(source, source.ReleaseName(app.Metadata.Name), namespace, opts)
-		case source.IsDirectory():
+		case application.SourceKindDirectory:
 			if valuesRepoURL != "" && !application.SameRepoURL(source.RepoURL, valuesRepoURL) {
 				slog.Warn("skipping directory source from another repository", "application", app.Metadata.Name, "repo", source.RepoURL, "path", source.Path)
 				continue
 			}
 			stream, err = renderDirectory(source, opts)
+		case application.SourceKindValuesRef:
+			// TODO: inform the user that this source is a ref and will not be rendered directly
+			continue
 		default:
-			return nil, fmt.Errorf("source %s sets neither chart nor directory", source.RepoURL)
+			// TODO: print a warning that this source is skipped
+			continue
 		}
 		if err != nil {
 			return nil, err
