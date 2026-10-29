@@ -60,8 +60,12 @@ func TestLoadKeepsOnlyArgoApplications(t *testing.T) {
 	if apps[0].Metadata.Name != "web" || apps[1].Metadata.Name != "docs" {
 		t.Errorf("names = %s, %s", apps[0].Metadata.Name, apps[1].Metadata.Name)
 	}
-	if apps[0].Spec.Source == nil || !apps[0].Spec.Source.IsChart() {
-		t.Error("web should have a single chart source")
+	if apps[0].Spec.Source == nil {
+		t.Fatal("web should have a single source")
+	}
+	expectedKind := SourceKindChart
+	if kind, err := apps[0].Spec.Source.Kind(); err != nil || kind != expectedKind {
+		t.Errorf("web source kind should be %s but got: kind = %q, error = %v", expectedKind, kind, err)
 	}
 	if len(apps[1].Spec.Sources) != 2 {
 		t.Errorf("docs has %d sources, want 2", len(apps[1].Spec.Sources))
@@ -101,26 +105,42 @@ func TestSourcesSingleOrMany(t *testing.T) {
 }
 
 func TestSourceKinds(t *testing.T) {
+	// tests that are expected to produce a SourceKind
 	tests := []struct {
-		name                        string
-		source                      Source
-		chart, directory, valuesRef bool
+		name     string
+		source   Source
+		expected SourceKind
 	}{
-		{"chart", Source{Chart: "web"}, true, false, false},
-		{"directory", Source{Path: "apps/web", Directory: &DirectorySource{}}, false, true, false},
-		{"values ref", Source{Ref: "values"}, false, false, true},
-		{"bare path", Source{Path: "apps/web"}, false, false, false},
+		{"chart", Source{Chart: "web"}, SourceKindChart},
+		{"directory", Source{Path: "apps/web", Directory: &DirectorySource{}}, SourceKindDirectory},
+		{"values ref", Source{Ref: "values"}, SourceKindUnknown},
+		{"path without directory", Source{Path: "apps/web"}, SourceKindUnknown},
 	}
+
+	// tests that are expected to produce an error
+	errorTests := []struct {
+		name string
+		source Source
+	}{
+		{"multiple kinds", Source{Chart: "web", Path: "apps/web", Directory: &DirectorySource{}}},
+	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.source.IsChart(); got != tt.chart {
-				t.Errorf("IsChart() = %v", got)
+			got, err := tt.source.Kind()
+			if err != nil {
+				t.Fatal(err)
 			}
-			if got := tt.source.IsDirectory(); got != tt.directory {
-				t.Errorf("IsDirectory() = %v", got)
+			if got != tt.expected {
+				t.Errorf("kind = %v, but expected %v", got, tt.expected)
 			}
-			if got := tt.source.IsValuesRef(); got != tt.valuesRef {
-				t.Errorf("IsValuesRef() = %v", got)
+		})
+	}
+
+	for _, tt := range errorTests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got, err := tt.source.Kind(); err == nil {
+				t.Errorf("kind = %v, but expected an error", got)
 			}
 		})
 	}

@@ -98,20 +98,33 @@ func (app *Application) Sources() []*Source {
 	return app.Spec.Sources
 }
 
-// IsValuesRef reports whether the source only lends its files to other
-// sources under $values and renders nothing itself.
-func (s *Source) IsValuesRef() bool {
-	return s.Ref == "values"
-}
+type SourceKind string
 
-// IsChart reports whether the source is a Helm chart.
-func (s *Source) IsChart() bool {
-	return s.Chart != ""
-}
+const (
+	SourceKindUnknown   SourceKind = "unknown"
+	SourceKindChart     SourceKind = "chart"
+	SourceKindDirectory SourceKind = "directory"
+)
 
-// IsDirectory reports whether the source is a directory of manifests.
-func (s *Source) IsDirectory() bool {
-	return s.Directory != nil
+// Kind determines the type of the source
+func (s *Source) Kind() (SourceKind, error) {
+	var kinds []SourceKind
+
+	if s.Chart != "" {
+		kinds = append(kinds, SourceKindChart)
+	}
+	if s.Directory != nil {
+		kinds = append(kinds, SourceKindDirectory)
+	}
+
+	switch len(kinds) {
+	case 0:
+		return SourceKindUnknown, nil
+	case 1:
+		return kinds[0], nil
+	default:
+		return SourceKindUnknown, fmt.Errorf("multiple kinds detected for source %s: %v", s.RepoURL, kinds)
+	}
 }
 
 // ReleaseName is the Helm release name, which defaults to fallback when the
