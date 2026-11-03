@@ -49,10 +49,10 @@ func Render(app application.Application, opts Options) ([]Manifest, error) {
 			}
 			stream, err = renderDirectory(source, opts)
 		case application.SourceKindValuesRef:
-			// TODO: inform the user that this source is a ref and will not be rendered directly
+			slog.Info("skipping source because it is a ref", "application", app.Metadata.Name, "ref", source.Ref)
 			continue
 		default:
-			// TODO: print a warning that this source is skipped
+			slog.Error("skipping source because its kind is unknown/not yet supported", "application", app.Metadata.Name)
 			continue
 		}
 		if err != nil {
