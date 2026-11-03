@@ -172,7 +172,8 @@ func TestReleaseNameFallsBackToApplication(t *testing.T) {
 	if got := s.ReleaseName("app"); got != "app" {
 		t.Errorf("ReleaseName() = %q, want app", got)
 	}
-	s.Helm.ReleaseName = "storefront"
+
+	s = Source{Chart: "web", Helm: &HelmSource{ReleaseName: "storefront"}}
 	if got := s.ReleaseName("app"); got != "storefront" {
 		t.Errorf("ReleaseName() = %q, want storefront", got)
 	}

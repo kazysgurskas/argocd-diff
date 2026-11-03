@@ -38,7 +38,7 @@ type Source struct {
 	TargetRevision string           `yaml:"targetRevision"`
 	Path           string           `yaml:"path,omitempty"`
 	Ref            string           `yaml:"ref,omitempty"`
-	Helm           HelmSource       `yaml:"helm,omitempty"`
+	Helm           *HelmSource      `yaml:"helm,omitempty"`
 	Directory      *DirectorySource `yaml:"directory,omitempty"`
 }
 
@@ -141,7 +141,7 @@ func (s *Source) IsDirectory() bool {
 // ReleaseName is the Helm release name, which defaults to fallback when the
 // source sets none.
 func (s *Source) ReleaseName(fallback string) string {
-	if s.Helm.ReleaseName != "" {
+	if s.Helm != nil && s.Helm.ReleaseName != "" {
 		return s.Helm.ReleaseName
 	}
 	return fallback
