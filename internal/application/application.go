@@ -38,7 +38,7 @@ type Source struct {
 	TargetRevision string           `yaml:"targetRevision"`
 	Path           string           `yaml:"path,omitempty"`
 	Ref            string           `yaml:"ref,omitempty"`
-	Helm           HelmSource       `yaml:"helm,omitempty"`
+	Helm           *HelmSource      `yaml:"helm,omitempty"`
 	Directory      *DirectorySource `yaml:"directory,omitempty"`
 }
 
@@ -103,7 +103,7 @@ func (app *Application) Sources() []*Source {
 // rendered from. It is empty when the Application has no such source.
 func (app *Application) ValuesRepoURL() string {
 	for _, source := range app.Sources() {
-		if source.IsValuesRef() {
+		if kind, err := source.Kind(); err == nil && kind == SourceKindValuesRef {
 			return source.RepoURL
 		}
 	}
@@ -122,26 +122,43 @@ func repoURLKey(url string) string {
 	return strings.TrimSuffix(url, ".git")
 }
 
-// IsValuesRef reports whether the source only lends its files to other
-// sources under $values and renders nothing itself.
-func (s *Source) IsValuesRef() bool {
-	return s.Ref == "values"
-}
+type SourceKind string
 
-// IsChart reports whether the source is a Helm chart.
-func (s *Source) IsChart() bool {
-	return s.Chart != ""
-}
+const (
+	SourceKindUnknown   SourceKind = "unknown"
+	SourceKindChart     SourceKind = "chart"
+	SourceKindDirectory SourceKind = "directory"
+	SourceKindValuesRef SourceKind = "values-ref"
+)
 
-// IsDirectory reports whether the source is a directory of manifests.
-func (s *Source) IsDirectory() bool {
-	return s.Directory != nil
+// Kind determines the type of the source
+func (s *Source) Kind() (SourceKind, error) {
+	var kinds []SourceKind
+
+	if s.Chart != "" {
+		kinds = append(kinds, SourceKindChart)
+	}
+	if s.Directory != nil {
+		kinds = append(kinds, SourceKindDirectory)
+	}
+	if s.Ref != "" {
+		kinds = append(kinds, SourceKindValuesRef)
+	}
+
+	switch len(kinds) {
+	case 0:
+		return SourceKindUnknown, nil
+	case 1:
+		return kinds[0], nil
+	default:
+		return SourceKindUnknown, fmt.Errorf("multiple kinds detected for source %s: %v", s.RepoURL, kinds)
+	}
 }
 
 // ReleaseName is the Helm release name, which defaults to fallback when the
 // source sets none.
 func (s *Source) ReleaseName(fallback string) string {
-	if s.Helm.ReleaseName != "" {
+	if s.Helm != nil && s.Helm.ReleaseName != "" {
 		return s.Helm.ReleaseName
 	}
 	return fallback
