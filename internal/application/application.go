@@ -30,15 +30,16 @@ type Application struct {
 	} `yaml:"spec"`
 }
 
-// Source is one source of an Application: a Helm chart, a directory of
-// manifests, or a repository that only lends its files to other sources.
+// Source is one source of an Application: a Helm chart, named by chart or
+// found at path, a directory of manifests, or a repository that only lends
+// its files to other sources.
 type Source struct {
 	RepoURL        string           `yaml:"repoURL"`
 	Chart          string           `yaml:"chart,omitempty"`
 	TargetRevision string           `yaml:"targetRevision"`
 	Path           string           `yaml:"path,omitempty"`
 	Ref            string           `yaml:"ref,omitempty"`
-	Helm           HelmSource       `yaml:"helm,omitempty"`
+	Helm           *HelmSource      `yaml:"helm,omitempty"`
 	Directory      *DirectorySource `yaml:"directory,omitempty"`
 }
 
@@ -128,7 +129,9 @@ func (s *Source) IsValuesRef() bool {
 	return s.Ref == "values"
 }
 
-// IsChart reports whether the source is a Helm chart.
+// IsChart reports whether the source names a chart in a Helm repository. A
+// chart at a path in the Git repository is told from a directory by its
+// Chart.yaml, which takes the checkout to see, so it is not reported here.
 func (s *Source) IsChart() bool {
 	return s.Chart != ""
 }
@@ -138,10 +141,34 @@ func (s *Source) IsDirectory() bool {
 	return s.Directory != nil
 }
 
+// IsHelm reports whether the source sets helm, which makes it a Helm chart
+// whatever its path holds, as in ArgoCD.
+func (s *Source) IsHelm() bool {
+	return s.Helm != nil
+}
+
+// Validate refuses a source that sets both helm and directory, which ArgoCD
+// rejects as having two source types.
+func (s *Source) Validate() error {
+	if s.Helm != nil && s.Directory != nil {
+		return errors.New("helm and directory are both set, which ArgoCD allows only one of")
+	}
+	return nil
+}
+
+// ValueFiles is the source's Helm value files, in order; none when the
+// source sets no helm.
+func (s *Source) ValueFiles() []string {
+	if s.Helm == nil {
+		return nil
+	}
+	return s.Helm.ValueFiles
+}
+
 // ReleaseName is the Helm release name, which defaults to fallback when the
 // source sets none.
 func (s *Source) ReleaseName(fallback string) string {
-	if s.Helm.ReleaseName != "" {
+	if s.Helm != nil && s.Helm.ReleaseName != "" {
 		return s.Helm.ReleaseName
 	}
 	return fallback

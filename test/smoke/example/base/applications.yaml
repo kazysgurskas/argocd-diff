@@ -1,6 +1,6 @@
-# Two ArgoCD Applications with directory sources, as the root chart of a
-# GitOps repo would render them. Paths are relative to this directory, the
-# checkout.
+# Three ArgoCD Applications, two with directory sources and one with a Helm
+# chart at a path, as the root chart of a GitOps repo would render them.
+# Paths are relative to this directory, the checkout.
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -33,3 +33,21 @@ spec:
     path: otherapp
     directory:
       recurse: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: chartapp.stage.cluster-1
+spec:
+  project: stage
+  destination:
+    name: cluster-1
+    namespace: chartapp
+  source:
+    repoURL: https://github.com/example/gitops
+    targetRevision: HEAD
+    path: chartapp
+    helm:
+      releaseName: chartapp
+      valueFiles:
+        - values-stage.yaml

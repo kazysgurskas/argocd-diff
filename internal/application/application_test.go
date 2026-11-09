@@ -63,6 +63,9 @@ func TestLoadKeepsOnlyArgoApplications(t *testing.T) {
 	if apps[0].Spec.Source == nil || !apps[0].Spec.Source.IsChart() {
 		t.Error("web should have a single chart source")
 	}
+	if !apps[0].Spec.Source.IsHelm() || apps[0].Spec.Source.Helm.ReleaseName != "storefront" {
+		t.Errorf("web's helm block = %+v, want releaseName storefront", apps[0].Spec.Source.Helm)
+	}
 	if len(apps[1].Spec.Sources) != 2 {
 		t.Errorf("docs has %d sources, want 2", len(apps[1].Spec.Sources))
 	}
@@ -143,14 +146,16 @@ func TestSameRepoURL(t *testing.T) {
 
 func TestSourceKinds(t *testing.T) {
 	tests := []struct {
-		name                        string
-		source                      Source
-		chart, directory, valuesRef bool
+		name                              string
+		source                            Source
+		chart, directory, helm, valuesRef bool
 	}{
-		{"chart", Source{Chart: "web"}, true, false, false},
-		{"directory", Source{Path: "apps/web", Directory: &DirectorySource{}}, false, true, false},
-		{"values ref", Source{Ref: "values"}, false, false, true},
-		{"bare path", Source{Path: "apps/web"}, false, false, false},
+		{"chart", Source{Chart: "web"}, true, false, false, false},
+		{"chart with values", Source{Chart: "web", Helm: &HelmSource{}}, true, false, true, false},
+		{"directory", Source{Path: "apps/web", Directory: &DirectorySource{}}, false, true, false, false},
+		{"helm path", Source{Path: "charts/web", Helm: &HelmSource{}}, false, false, true, false},
+		{"values ref", Source{Ref: "values"}, false, false, false, true},
+		{"bare path", Source{Path: "apps/web"}, false, false, false, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -159,6 +164,9 @@ func TestSourceKinds(t *testing.T) {
 			}
 			if got := tt.source.IsDirectory(); got != tt.directory {
 				t.Errorf("IsDirectory() = %v", got)
+			}
+			if got := tt.source.IsHelm(); got != tt.helm {
+				t.Errorf("IsHelm() = %v", got)
 			}
 			if got := tt.source.IsValuesRef(); got != tt.valuesRef {
 				t.Errorf("IsValuesRef() = %v", got)
@@ -172,8 +180,20 @@ func TestReleaseNameFallsBackToApplication(t *testing.T) {
 	if got := s.ReleaseName("app"); got != "app" {
 		t.Errorf("ReleaseName() = %q, want app", got)
 	}
-	s.Helm.ReleaseName = "storefront"
+	s.Helm = &HelmSource{ReleaseName: "storefront"}
 	if got := s.ReleaseName("app"); got != "storefront" {
 		t.Errorf("ReleaseName() = %q, want storefront", got)
+	}
+}
+
+func TestValidateRefusesHelmWithDirectory(t *testing.T) {
+	for _, s := range []Source{{Path: "apps/web", Helm: &HelmSource{}}, {Path: "apps/web", Directory: &DirectorySource{}}, {Chart: "web"}} {
+		if err := s.Validate(); err != nil {
+			t.Errorf("Validate() = %v for %+v", err, s)
+		}
+	}
+	s := Source{Path: "apps/web", Helm: &HelmSource{}, Directory: &DirectorySource{}}
+	if err := s.Validate(); err == nil {
+		t.Error("a source with both helm and directory must be refused")
 	}
 }

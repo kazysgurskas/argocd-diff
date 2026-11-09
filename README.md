@@ -18,10 +18,10 @@ Applications produce — no ArgoCD server, no cluster, no kubeconfig.
  
 argocd-diff reads your Application resources from a checkout of your GitOps
 repo and renders them the same way ArgoCD's repo server would. Helm charts are
-pulled and templated with the Helm SDK, directory sources are used as-is, and
-Secret values are redacted. The only network calls go to the chart
-repositories your Applications point at, and downloaded charts are cached
-between runs.
+pulled or read from the checkout and templated with the Helm SDK, directory
+sources are used as-is, and Secret values are redacted. The only network calls
+go to the chart repositories your Applications and charts point at, and
+downloaded charts are cached between runs.
  
 Give it the base and head of a pull request, and it renders both, compares
 them, and produces:
@@ -33,6 +33,8 @@ them, and produces:
 ### What's supported
  
 - Helm charts from HTTP and OCI repositories
+- Helm charts at a path in the repository, with their dependencies built as
+  `helm dependency build` would
 - Directories of plain manifests
 - Single-source and multi-source Applications
 Private chart registries work the same way they do with `helm pull`: log in
@@ -75,10 +77,24 @@ This writes the report to `diff.html` and the summary to `diff.md`.
 A few things worth knowing:
  
 - **Paths:** source paths in your Applications (`path:`, `$values/…`) are
-  resolved relative to the checkout they come from. A directory source that
-  points at a repository other than the one the `ref: values` source names
-  isn't in that checkout, so it's skipped with a warning and its manifests
-  don't appear in the diff.
+  resolved relative to the checkout they come from. A path that sets `helm:`
+  or holds a `Chart.yaml` is templated as a Helm chart, as ArgoCD decides it;
+  any other path needs `directory:`, and setting both `helm:` and
+  `directory:` is an error, as in ArgoCD. `valueFiles` without `$values/`
+  are relative to the chart: its path in the repository, or the chart itself
+  when it comes from a Helm repository. A source that points at a path in a
+  repository other than the one the `ref: values` source names isn't in that
+  checkout, so it's skipped with a warning and its manifests don't appear in
+  the diff.
+- **Chart dependencies:** a chart in the repository whose `Chart.yaml`
+  declares dependencies that aren't under `charts/`, or that come from
+  `file://` paths, gets them built before it's templated, as ArgoCD does. The
+  build runs in a temporary copy of the chart, together with the local charts
+  its `file://` dependencies name, so nothing is written into the checkout
+  and no `Chart.lock` or `charts/*.tgz` turns up as an untracked file. The
+  cost is that such dependencies are fetched on every run and aren't kept in
+  `--charts-dir`. Dependencies that name their repository by alias
+  (`@stable`, `alias:stable`) can't be resolved, as in ArgoCD; give the URL.
 - **Changing inputs and outputs:** use `--base`, `--head` and
   `--applications` for the inputs, and `--report` and `--summary` for the
   outputs.
@@ -234,10 +250,11 @@ current directory.
 ```console
 $ argocd-diff hydrate --help
 Render the ArgoCD Applications of one checkout into the Kubernetes manifests
-they would deploy, without an ArgoCD instance. Helm chart sources are pulled
-and templated, directory sources are read as they are, and Secret values are
-redacted. Source paths in the Applications are relative to the working
-directory, so run it from the checkout. Each application is written to
+they would deploy, without an ArgoCD instance. Helm charts are pulled from
+their repository or read from the checkout and templated, directory sources
+are read as they are, and Secret values are redacted. Source paths in the
+Applications are relative to the working directory, so run it from the
+checkout. Each application is written to
 <rendered-dir>/<application>/<namespace>/<Kind>/<name>.yaml, or
 <rendered-dir>/<application>/<Kind>/<name>.yaml for a cluster-scoped object.
  
