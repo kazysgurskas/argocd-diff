@@ -30,10 +30,11 @@ func newHydrateCommand() *cobra.Command {
 		Use:   "hydrate",
 		Short: "Render ArgoCD applications into Kubernetes manifests",
 		Long: `Render the ArgoCD Applications of one checkout into the Kubernetes manifests
-they would deploy, without an ArgoCD instance. Helm chart sources are pulled
-and templated, directory sources are read as they are, and Secret values are
-redacted. Source paths in the Applications are relative to the working
-directory, so run it from the checkout. Each application is written to
+they would deploy, without an ArgoCD instance. Helm charts are pulled from
+their repository or read from the checkout and templated, directory sources
+are read as they are, and Secret values are redacted. Source paths in the
+Applications are relative to the working directory, so run it from the
+checkout. Each application is written to
 <rendered-dir>/<application>/<namespace>/<Kind>/<name>.yaml, or
 <rendered-dir>/<application>/<Kind>/<name>.yaml for a cluster-scoped object.`,
 		Example: `  argocd-diff hydrate

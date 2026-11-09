@@ -92,17 +92,19 @@ func TestRenderSkipsValuesRefAndRejectsBareSource(t *testing.T) {
 	}
 }
 
-// TestRenderSkipsDirectorySourceFromAnotherRepository pins that a directory
-// source from a repository other than the values source's is not looked for
-// in the checkout: it is skipped with a warning and the other sources still
-// render. The repository is matched ignoring case and a .git suffix.
-func TestRenderSkipsDirectorySourceFromAnotherRepository(t *testing.T) {
+// TestRenderSkipsPathSourcesFromAnotherRepository pins that a path source,
+// whether a directory or a chart, from a repository other than the values
+// source's is not looked for in the checkout: it is skipped with a warning
+// and the other sources still render. The repository is matched ignoring
+// case and a .git suffix.
+func TestRenderSkipsPathSourcesFromAnotherRepository(t *testing.T) {
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{"apps/web/a.yaml": "kind: ConfigMap\nmetadata:\n  name: a\n"})
 	var app application.Application
 	app.Metadata.Name = "web"
 	app.Spec.Sources = []*application.Source{
 		{RepoURL: "https://github.com/example/ip-lists", Path: "kubernetes", Directory: &application.DirectorySource{}},
+		{RepoURL: "https://github.com/example/charts", Path: "charts/web"},
 		{RepoURL: "https://github.com/Example/gitops.git", Path: "apps/web", Directory: &application.DirectorySource{}},
 		{RepoURL: "https://github.com/example/gitops", Ref: "values"},
 	}
@@ -118,7 +120,7 @@ func TestRenderSkipsDirectorySourceFromAnotherRepository(t *testing.T) {
 	if len(manifests) != 1 || manifests[0].Name != "a" {
 		t.Errorf("manifests = %+v", manifests)
 	}
-	for _, want := range []string{"level=WARN", "application=web", "repo=https://github.com/example/ip-lists", "path=kubernetes"} {
+	for _, want := range []string{"level=WARN", "application=web", "repo=https://github.com/example/ip-lists", "path=kubernetes", "repo=https://github.com/example/charts", "path=charts/web"} {
 		if !strings.Contains(logs.String(), want) {
 			t.Errorf("log lacks %q:\n%s", want, logs.String())
 		}

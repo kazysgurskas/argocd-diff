@@ -1,0 +1,4 @@
+replicaCount: 1
+image:
+  repository: ghcr.io/example/chartapp
+  tag: 1.0.0
