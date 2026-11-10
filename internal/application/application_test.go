@@ -1,8 +1,10 @@
 package application
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -43,6 +45,10 @@ spec:
         recurse: true
     - repoURL: https://github.com/example/gitops
       ref: values
+    - repoURL: https://github.com/example/gitops
+      path: apps/docs-kustomize
+      kustomize:
+        namePrefix: docs-
 `
 
 func TestLoadKeepsOnlyArgoApplications(t *testing.T) {
@@ -66,8 +72,11 @@ func TestLoadKeepsOnlyArgoApplications(t *testing.T) {
 	if !apps[0].Spec.Source.IsHelm() || apps[0].Spec.Source.Helm.ReleaseName != "storefront" {
 		t.Errorf("web's helm block = %+v, want releaseName storefront", apps[0].Spec.Source.Helm)
 	}
-	if len(apps[1].Spec.Sources) != 2 {
-		t.Errorf("docs has %d sources, want 2", len(apps[1].Spec.Sources))
+	if len(apps[1].Spec.Sources) != 3 {
+		t.Fatalf("docs has %d sources, want 3", len(apps[1].Spec.Sources))
+	}
+	if k := apps[1].Spec.Sources[2].Kustomize; k == nil || k.NamePrefix != "docs-" {
+		t.Errorf("kustomize block = %+v, want namePrefix docs-", k)
 	}
 }
 
@@ -103,21 +112,60 @@ func TestSourcesSingleOrMany(t *testing.T) {
 	}
 }
 
-func TestValuesRepoURL(t *testing.T) {
+// TestRefSources pins that ref sources are keyed $<ref>, as ArgoCD keys
+// them, and that a ref set twice is refused.
+func TestRefSources(t *testing.T) {
+	values := &Source{RepoURL: "https://github.com/example/gitops", Ref: "values"}
+	shared := &Source{RepoURL: "https://github.com/example/shared", Ref: "shared", Path: "defaults"}
 	var app Application
-	if got := app.ValuesRepoURL(); got != "" {
-		t.Errorf("ValuesRepoURL() = %q for an application without sources", got)
+	app.Spec.Sources = []*Source{{RepoURL: "https://charts.example.com", Chart: "web"}, values, shared}
+	refs, err := app.RefSources()
+	if err != nil {
+		t.Fatal(err)
 	}
-	app.Spec.Sources = []*Source{
-		{RepoURL: "https://charts.example.com", Chart: "web"},
-		{RepoURL: "https://github.com/example/gitops", Ref: "values"},
+	if len(refs) != 2 || refs["$values"] != values || refs["$shared"] != shared {
+		t.Errorf("RefSources() = %v", refs)
 	}
-	if got := app.ValuesRepoURL(); got != "https://github.com/example/gitops" {
-		t.Errorf("ValuesRepoURL() = %q, want the values source's repository", got)
+
+	app.Spec.Sources = append(app.Spec.Sources, &Source{RepoURL: "https://github.com/example/other", Ref: "values"})
+	if _, err := app.RefSources(); err == nil || !strings.Contains(err.Error(), `ref "values"`) {
+		t.Errorf("want a duplicate ref error, got %v", err)
 	}
-	app.Spec.Source = &Source{RepoURL: "https://github.com/example/gitops", Path: "apps/web", Directory: &DirectorySource{}}
-	if got := app.ValuesRepoURL(); got != "" {
-		t.Errorf("ValuesRepoURL() = %q for a single directory source", got)
+}
+
+func TestCheckoutRepoURL(t *testing.T) {
+	gitops := "https://github.com/example/gitops"
+	shared := "https://github.com/example/shared"
+	other := "https://github.com/example/other"
+	tests := []struct {
+		name      string
+		sources   []*Source
+		want      string
+		ambiguous bool
+	}{
+		{"no ref source", []*Source{{RepoURL: "https://charts.example.com", Chart: "web"}}, "", false},
+		{"one ref source", []*Source{{RepoURL: gitops, Ref: "values"}}, gitops, false},
+		{"ref sources on one repository", []*Source{{RepoURL: gitops, Ref: "values"}, {RepoURL: "https://github.com/Example/gitops.git", Ref: "shared"}}, gitops, false},
+		{"ref sources on two repositories, values among them", []*Source{{RepoURL: shared, Ref: "shared"}, {RepoURL: gitops, Ref: "values"}}, gitops, false},
+		{"ref sources on two repositories, values last", []*Source{{RepoURL: shared, Ref: "shared"}, {RepoURL: other, Ref: "other"}, {RepoURL: gitops, Ref: "values"}}, gitops, false},
+		{"ref sources on two repositories, values first", []*Source{{RepoURL: gitops, Ref: "values"}, {RepoURL: shared, Ref: "shared"}, {RepoURL: other, Ref: "other"}}, gitops, false},
+		{"ref sources on two repositories, no values", []*Source{{RepoURL: gitops, Ref: "shared"}, {RepoURL: other, Ref: "other"}}, "", true},
+		{"ref sources on two repositories, the first repeated, no values", []*Source{{RepoURL: shared, Ref: "shared"}, {RepoURL: other, Ref: "other"}, {RepoURL: shared, Ref: "again"}}, "", true},
+		{"ref sources on one repository, scp-like and HTTPS", []*Source{{RepoURL: "git@github.com:example/gitops.git", Ref: "shared"}, {RepoURL: gitops, Ref: "other"}}, "git@github.com:example/gitops.git", false},
+		{"ref sources on one repository, ssh URL and HTTPS", []*Source{{RepoURL: "ssh://git@github.com/example/gitops", Ref: "shared"}, {RepoURL: gitops, Ref: "other"}}, "ssh://git@github.com/example/gitops", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var app Application
+			app.Spec.Sources = tt.sources
+			got, err := app.CheckoutRepoURL()
+			if got != tt.want {
+				t.Errorf("CheckoutRepoURL() = %q, want %q", got, tt.want)
+			}
+			if ambiguous := errors.Is(err, ErrAmbiguousCheckout); ambiguous != tt.ambiguous || (err != nil && !ambiguous) {
+				t.Errorf("CheckoutRepoURL() error = %v, want ambiguous %t", err, tt.ambiguous)
+			}
+		})
 	}
 }
 
@@ -134,6 +182,15 @@ func TestSameRepoURL(t *testing.T) {
 		{"space", " https://github.com/example/gitops\n", "https://github.com/example/gitops", true},
 		{"other repository", "https://github.com/example/ip-lists", "https://github.com/example/gitops", false},
 		{"other host", "https://gitlab.com/example/gitops", "https://github.com/example/gitops", false},
+		{"scp-like", "git@github.com:example/gitops.git", "https://github.com/example/gitops", true},
+		{"ssh URL", "ssh://git@github.com/example/gitops.git", "https://github.com/example/gitops", true},
+		{"ssh URL with port", "ssh://git@github.com:22/example/gitops", "git@github.com:example/gitops", true},
+		{"user and token", "https://bot:token@github.com/example/gitops", "https://github.com/example/gitops", true},
+		{"http", "http://github.com/example/gitops", "https://github.com/example/gitops", true},
+		{"scp-like, other repository", "git@github.com:example/ip-lists.git", "https://github.com/example/gitops", false},
+		{"scp-like, other host", "git@gitlab.com:example/gitops.git", "https://github.com/example/gitops", false},
+		{"local path", "/srv/git/gitops.git", "/srv/git/gitops/", true},
+		{"local path and URL", "/srv/git/gitops", "https://github.com/example/gitops", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -146,16 +203,17 @@ func TestSameRepoURL(t *testing.T) {
 
 func TestSourceKinds(t *testing.T) {
 	tests := []struct {
-		name                              string
-		source                            Source
-		chart, directory, helm, valuesRef bool
+		name                                   string
+		source                                 Source
+		chart, directory, helm, isRef, refOnly bool
 	}{
-		{"chart", Source{Chart: "web"}, true, false, false, false},
-		{"chart with values", Source{Chart: "web", Helm: &HelmSource{}}, true, false, true, false},
-		{"directory", Source{Path: "apps/web", Directory: &DirectorySource{}}, false, true, false, false},
-		{"helm path", Source{Path: "charts/web", Helm: &HelmSource{}}, false, false, true, false},
-		{"values ref", Source{Ref: "values"}, false, false, false, true},
-		{"bare path", Source{Path: "apps/web"}, false, false, false, false},
+		{"chart", Source{Chart: "web"}, true, false, false, false, false},
+		{"chart with values", Source{Chart: "web", Helm: &HelmSource{}}, true, false, true, false, false},
+		{"directory", Source{Path: "apps/web", Directory: &DirectorySource{}}, false, true, false, false, false},
+		{"helm path", Source{Path: "charts/web", Helm: &HelmSource{}}, false, false, true, false, false},
+		{"ref only", Source{Ref: "values"}, false, false, false, true, true},
+		{"ref with path", Source{Ref: "values", Path: "apps/web"}, false, false, false, true, false},
+		{"bare path", Source{Path: "apps/web"}, false, false, false, false, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -168,8 +226,54 @@ func TestSourceKinds(t *testing.T) {
 			if got := tt.source.IsHelm(); got != tt.helm {
 				t.Errorf("IsHelm() = %v", got)
 			}
-			if got := tt.source.IsValuesRef(); got != tt.valuesRef {
-				t.Errorf("IsValuesRef() = %v", got)
+			if got := tt.source.IsRef(); got != tt.isRef {
+				t.Errorf("IsRef() = %v", got)
+			}
+			if got := tt.source.IsRefOnly(); got != tt.refOnly {
+				t.Errorf("IsRefOnly() = %v", got)
+			}
+		})
+	}
+}
+
+// TestValidate pins which sources are refused, with ArgoCD's reasons, and
+// that every shape ArgoCD accepts passes.
+func TestValidate(t *testing.T) {
+	valid := map[string]Source{
+		"chart":           {Chart: "web"},
+		"chart with helm": {Chart: "web", Helm: &HelmSource{}},
+		"helm path":       {Path: "charts/web", Helm: &HelmSource{}},
+		"directory":       {Path: "apps/web", Directory: &DirectorySource{}},
+		"kustomize":       {Path: "apps/web", Kustomize: &KustomizeSource{}},
+		"plugin":          {Path: "apps/web", Plugin: &PluginSource{}},
+		"bare path":       {Path: "apps/web"},
+		"ref only":        {Ref: "values"},
+		"ref with path":   {Ref: "shared_values-1", Path: "defaults"},
+	}
+	for name, s := range valid {
+		t.Run(name, func(t *testing.T) {
+			if err := s.Validate(); err != nil {
+				t.Errorf("Validate() = %v, want nil", err)
+			}
+		})
+	}
+	invalid := map[string]struct {
+		source Source
+		want   string
+	}{
+		"helm and directory":     {Source{Path: "a", Helm: &HelmSource{}, Directory: &DirectorySource{}}, "multiple source types set: Helm, Directory"},
+		"kustomize and plugin":   {Source{Path: "a", Kustomize: &KustomizeSource{}, Plugin: &PluginSource{}}, "multiple source types set: Kustomize, Plugin"},
+		"chart with directory":   {Source{Chart: "web", Directory: &DirectorySource{}}, "chart is set on a Directory source"},
+		"chart under ref":        {Source{Chart: "web", Ref: "values"}, "lent under ref"},
+		"ref with a space":       {Source{Ref: "my values"}, "may only contain"},
+		"nothing to render":      {Source{RepoURL: "https://github.com/example/gitops"}, "none of path, chart and ref"},
+		"helm block and nothing": {Source{Helm: &HelmSource{}}, "none of path, chart and ref"},
+	}
+	for name, tt := range invalid {
+		t.Run(name, func(t *testing.T) {
+			err := tt.source.Validate()
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("Validate() = %v, want an error containing %q", err, tt.want)
 			}
 		})
 	}
@@ -183,17 +287,5 @@ func TestReleaseNameFallsBackToApplication(t *testing.T) {
 	s.Helm = &HelmSource{ReleaseName: "storefront"}
 	if got := s.ReleaseName("app"); got != "storefront" {
 		t.Errorf("ReleaseName() = %q, want storefront", got)
-	}
-}
-
-func TestValidateRefusesHelmWithDirectory(t *testing.T) {
-	for _, s := range []Source{{Path: "apps/web", Helm: &HelmSource{}}, {Path: "apps/web", Directory: &DirectorySource{}}, {Chart: "web"}} {
-		if err := s.Validate(); err != nil {
-			t.Errorf("Validate() = %v for %+v", err, s)
-		}
-	}
-	s := Source{Path: "apps/web", Helm: &HelmSource{}, Directory: &DirectorySource{}}
-	if err := s.Validate(); err == nil {
-		t.Error("a source with both helm and directory must be refused")
 	}
 }

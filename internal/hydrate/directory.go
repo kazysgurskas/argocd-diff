@@ -14,8 +14,8 @@ import (
 
 // renderDirectory joins the .yaml files under source.Path, relative to
 // opts.Root, into one stream, each file as its own document, in path order.
-// Subdirectories count only when the source asks to recurse. The source must
-// be a directory source.
+// Subdirectories count only when the source's directory block asks to
+// recurse.
 func renderDirectory(source *application.Source, opts Options) (string, error) {
 	root := filepath.Join(opts.Root, source.Path)
 	info, err := os.Stat(root)
@@ -25,7 +25,7 @@ func renderDirectory(source *application.Source, opts Options) (string, error) {
 	if !info.IsDir() {
 		return "", fmt.Errorf("%s is not a directory", root)
 	}
-	recurse := source.Directory.Recurse
+	recurse := source.Directory != nil && source.Directory.Recurse
 
 	var paths []string
 	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {

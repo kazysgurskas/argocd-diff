@@ -1,8 +1,6 @@
 package hydrate
 
 import (
-	"bytes"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,26 +67,77 @@ func TestRenderDirectoryRejectsFile(t *testing.T) {
 	}
 }
 
-func TestRenderSkipsValuesRefAndRejectsBareSource(t *testing.T) {
+// TestRenderSkipsRefOnlySourceAndReadsBarePathAsDirectory pins that a
+// source lending its files under ref renders nothing, and that a path with
+// neither Chart.yaml nor kustomization is a directory of manifests, as
+// ArgoCD detects it, even without a directory block.
+func TestRenderSkipsRefOnlySourceAndReadsBarePathAsDirectory(t *testing.T) {
 	root := t.TempDir()
-	writeTree(t, root, map[string]string{"a.yaml": "kind: ConfigMap\nmetadata:\n  name: a\n"})
+	writeTree(t, root, map[string]string{
+		"dir/b.yaml":      "kind: ConfigMap\nmetadata:\n  name: b\n",
+		"apps/web/a.yaml": "kind: ConfigMap\nmetadata:\n  name: a\n",
+	})
 	var app application.Application
 	app.Metadata.Name = "web"
 	app.Spec.Sources = []*application.Source{
 		{RepoURL: "https://github.com/example/gitops", Ref: "values"},
-		{RepoURL: "https://github.com/example/gitops", Path: root, Directory: &application.DirectorySource{}},
+		{RepoURL: "https://github.com/example/gitops", Path: "dir", Directory: &application.DirectorySource{}},
+		{RepoURL: "https://github.com/example/gitops", Path: "apps/web"},
 	}
-	manifests, err := Render(app, Options{})
+	manifests, err := Render(app, Options{Root: root})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(manifests) != 1 || manifests[0].Name != "a" {
-		t.Errorf("manifests = %+v", manifests)
+	if len(manifests) != 2 || manifests[0].Name != "b" || manifests[1].Name != "a" {
+		t.Errorf("manifests = %+v, want b then a", manifests)
+	}
+}
+
+// TestRenderBuildsKustomization pins that a Kustomize source, detected by
+// its kustomization file or named by its block, is built, with the block's
+// settings applied.
+func TestRenderBuildsKustomization(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"apps/k/kustomization.yaml": "resources:\n  - deploy.yaml\n",
+		"apps/k/deploy.yaml":        "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: k\n",
+	})
+	var app application.Application
+	app.Metadata.Name = "k"
+	app.Spec.Source = &application.Source{RepoURL: "https://github.com/example/gitops", Path: "apps/k"}
+	manifests, err := Render(app, Options{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifests) != 1 || manifests[0].Kind != "Deployment" || manifests[0].Name != "k" {
+		t.Errorf("manifests = %+v, want the one Deployment", manifests)
 	}
 
-	app.Spec.Sources = append(app.Spec.Sources, &application.Source{RepoURL: "https://github.com/example/gitops", Path: "apps/web"})
-	if _, err := Render(app, Options{}); err == nil {
-		t.Error("a source with neither chart nor directory must be refused")
+	app.Spec.Source.Kustomize = &application.KustomizeSource{NamePrefix: "stage-"}
+	manifests, err = Render(app, Options{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifests) != 1 || manifests[0].Name != "stage-k" {
+		t.Errorf("manifests = %+v, want the Deployment prefixed by the block", manifests)
+	}
+}
+
+// TestRenderSkipsPluginWithWarning pins that a plugin source, the one kind
+// not rendered, is skipped with a warning rather than refused.
+func TestRenderSkipsPluginWithWarning(t *testing.T) {
+	logs := captureLogs(t)
+	var app application.Application
+	app.Metadata.Name = "p"
+	app.Spec.Source = &application.Source{RepoURL: "https://github.com/example/gitops", Path: "apps/p", Plugin: &application.PluginSource{}}
+	manifests, err := Render(app, Options{Root: t.TempDir()})
+	if err != nil || len(manifests) != 0 {
+		t.Errorf("manifests = %+v, err = %v; want none and nil", manifests, err)
+	}
+	for _, want := range []string{"level=WARN", "kind=Plugin", "application=p"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("log lacks %q:\n%s", want, logs.String())
+		}
 	}
 }
 
@@ -109,10 +158,7 @@ func TestRenderSkipsPathSourcesFromAnotherRepository(t *testing.T) {
 		{RepoURL: "https://github.com/example/gitops", Ref: "values"},
 	}
 
-	var logs bytes.Buffer
-	defer slog.SetDefault(slog.Default())
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
-
+	logs := captureLogs(t)
 	manifests, err := Render(app, Options{Root: root})
 	if err != nil {
 		t.Fatal(err)
