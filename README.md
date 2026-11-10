@@ -36,9 +36,15 @@ them, and produces:
 - Helm charts at a path in the repository, with their dependencies built as
   `helm dependency build` would
 - Directories of plain manifests
-- Single-source and multi-source Applications
-Private chart registries work the same way they do with `helm pull`: log in
-first with `helm registry login` or a Docker credential helper.
+- Kustomizations, built with the kustomize library, with the `kustomize:`
+  settings ArgoCD applies: `namePrefix`, `nameSuffix`, `namespace`,
+  `images`, `commonLabels`, `commonAnnotations`, `replicas`, `patches` and
+  `components`
+- Single-source and multi-source Applications, with `$<ref>/…` value files
+  lent by any `ref` source
+Plugin sources aren't rendered; they're skipped with a warning. Private chart
+registries work the same way they do with `helm pull`: log in first with
+`helm registry login` or a Docker credential helper.
  
 ## Install
  
@@ -76,25 +82,46 @@ This writes the report to `diff.html` and the summary to `diff.md`.
  
 A few things worth knowing:
  
-- **Paths:** source paths in your Applications (`path:`, `$values/…`) are
-  resolved relative to the checkout they come from. A path that sets `helm:`
-  or holds a `Chart.yaml` is templated as a Helm chart, as ArgoCD decides it;
-  any other path needs `directory:`, and setting both `helm:` and
-  `directory:` is an error, as in ArgoCD. `valueFiles` without `$values/`
-  are relative to the chart: its path in the repository, or the chart itself
-  when it comes from a Helm repository. A source that points at a path in a
-  repository other than the one the `ref: values` source names isn't in that
-  checkout, so it's skipped with a warning and its manifests don't appear in
-  the diff.
-- **Chart dependencies:** a chart in the repository whose `Chart.yaml`
-  declares dependencies that aren't under `charts/`, or that come from
-  `file://` paths, gets them built before it's templated, as ArgoCD does. The
-  build runs in a temporary copy of the chart, together with the local charts
-  its `file://` dependencies name, so nothing is written into the checkout
-  and no `Chart.lock` or `charts/*.tgz` turns up as an untracked file. The
-  cost is that such dependencies are fetched on every run and aren't kept in
-  `--charts-dir`. Dependencies that name their repository by alias
-  (`@stable`, `alias:stable`) can't be resolved, as in ArgoCD; give the URL.
+- **Paths:** `path:` and `$<ref>/…` value files are resolved relative to the
+  checkout. ArgoCD's rules decide the source type: an explicit `helm:`,
+  `kustomize:`, `directory:` or `plugin:` block wins, and `chart:` means
+  Helm. Otherwise the tool looks at the path: a kustomization file means
+  Kustomize, a `Chart.yaml` means Helm, and anything else is treated as
+  plain manifests. Plugin sources are skipped with a warning. Value files
+  without a `$` prefix are relative to the chart. `$<ref>/<file>` is
+  relative to the root of the repository that the matching `ref` source
+  points at, which has to be the checkout. The checkout's repository is
+  `--repo-url` when given, otherwise the one the `ref` sources name, or the
+  `ref: values` one if they disagree. If they disagree and none is
+  `ref: values`, nothing says which repository the checkout is, so path
+  sources and `$<ref>/` value files can't be placed: pass `--repo-url`.
+  Repositories are compared by host and path, so the HTTPS and SSH URLs of
+  one repository count as the same one.
+  Sources from a different repository than the checkout are skipped with a
+  warning. A `ref` source that also has a `path` is rendered, as in ArgoCD.
+- **Kustomize:** builds use `kustomize build` defaults: files can only be
+  loaded from inside the kustomization directory, and plugins and
+  `helmCharts` don't run. `--kustomize-build-options` takes the same string
+  as argocd-cm's `kustomize.buildOptions`: `--enable-helm` (which runs the
+  `helm` binary, or the one `--helm-command` names) and `--load-restrictor`
+  are honored, other flags are refused. The Application's `kustomize:`
+  settings are applied in memory, so the checkout isn't modified. A label
+  or annotation set in both places fails the build unless
+  `forceCommonLabels` or `forceCommonAnnotations` is set, as in ArgoCD.
+  `kustomize.version` is ignored with a warning, and build environment
+  variables such as `${ARGOCD_APP_NAME}` aren't substituted;
+  `commonAnnotationsEnvsubst` only warns.
+- **Unrenderable sources:** by default, the run fails on any source ArgoCD
+  would reject. That covers setting more than one source type, `chart:` on
+  a non-Helm source, `chart:` on a `ref` source, two sources sharing a
+  `ref`, a `$<ref>/` value file pointing at a ref that doesn't exist or
+  isn't in the checkout, a path source or `$<ref>/` value file that can't
+  be placed because the `ref` sources disagree about the checkout, and a
+  `kustomize:` label or annotation that the kustomization already sets
+  without the force setting. Failing makes sure a broken Application
+  doesn't show up as "no changes". Use `--skip-unrenderable` to log and
+  skip these sources instead. Charts that fail to template, and
+  kustomizations that fail to build, still fail the run either way.
 - **Changing inputs and outputs:** use `--base`, `--head` and
   `--applications` for the inputs, and `--report` and `--summary` for the
   outputs.
@@ -112,60 +139,63 @@ Render the ArgoCD Applications of two checkouts of a GitOps repository and
 show what changed in the Kubernetes manifests they produce, as a
 self-contained HTML report and a Markdown summary for a pull request comment.
 No ArgoCD instance or cluster is needed.
- 
+
 By default the checkouts are ./base and ./head, each holding its Application
 resources as applications.yaml; source paths in the Applications are resolved
 against their checkout. Pass --no-hydrate to diff two trees that
 "argocd-diff hydrate" rendered earlier.
- 
+
 Inside GitHub Actions the report header is filled from GITHUB_REPOSITORY,
 GITHUB_BASE_REF, GITHUB_HEAD_REF and GITHUB_REF; pass --pr-title and --author
 from the event.
- 
+
 Usage:
   argocd-diff [flags]
   argocd-diff [command]
- 
+
 Examples:
   # The pull request's base is checked out in base/, its head in head/, and
   # the Application resources were rendered into applications.yaml in each
   argocd-diff --summary diff.md --pr-title "$PR_TITLE" --author "$AUTHOR"
- 
+
   # Explicit paths, keeping the rendered manifests for other tools to scan
   argocd-diff --base base-checkout --head head-checkout --applications manifests/applications.yaml \
       --rendered-dir rendered --report manifest-diff.html --summary manifest-diff.md
- 
+
   # Two trees rendered earlier with "argocd-diff hydrate"
   argocd-diff --no-hydrate --base base-manifests --head head-manifests
- 
+
 Available Commands:
   completion  Generate the autocompletion script for the specified shell
   help        Help about any command
   hydrate     Render ArgoCD applications into Kubernetes manifests
- 
+
 Flags:
-      --base string           Base checkout of the GitOps repository: a directory or a .zip of one (default "base")
-      --head string           Head checkout of the GitOps repository: a directory or a .zip of one (default "head")
-      --applications string   ArgoCD Application file inside each checkout, as "helm template" of an app-of-apps chart writes it (default "applications.yaml")
-      --no-hydrate            Base and head are already rendered manifest trees, as "argocd-diff hydrate" writes them; diff them as they are
-      --kube-version string   Kubernetes version to render Helm charts for (default "1.35.6")
-      --charts-dir string     Directory pulled Helm charts are kept in between runs (default "cache")
-      --rendered-dir string   Keep the rendered manifests of both sides here, as base/ and head/, for other tools to scan (default: a temporary directory)
-      --report string         HTML report to write (default "diff.html")
-      --summary string        Markdown summary to write, for a pull request comment (default: none)
-      --context int           Unchanged lines the report keeps around each change (default 3)
-      --full-text-limit int   Largest modified file, in lines, whose whole text the report embeds so context can be expanded (-1: never) (default 2000)
-      --title string          Title of the report (default: "<repo> #<pr-number>", or the two paths)
-      --repo string           Repository as owner/name, shown in the report header (default: $GITHUB_REPOSITORY)
-      --pr-number int         Pull request number, shown in the report header (default: from $GITHUB_REF or $GITHUB_PR_NUMBER)
-      --pr-title string       Pull request title, shown in the report header
-      --pr-url string         Link from the report header to the pull request (default: github.com/<repo>/pull/<pr-number>)
-      --base-ref string       Base branch, shown in the report header (default: $GITHUB_BASE_REF)
-      --head-ref string       Head branch, shown in the report header (default: $GITHUB_HEAD_REF)
-      --author string         Pull request author, shown in the report header
-  -h, --help                  help for argocd-diff
-  -v, --version               version for argocd-diff
- 
+      --base string                      Base checkout of the GitOps repository: a directory or a .zip of one (default "base")
+      --head string                      Head checkout of the GitOps repository: a directory or a .zip of one (default "head")
+      --applications string              ArgoCD Application file inside each checkout, as "helm template" of an app-of-apps chart writes it (default "applications.yaml")
+      --no-hydrate                       Base and head are already rendered manifest trees, as "argocd-diff hydrate" writes them; diff them as they are
+      --kube-version string              Kubernetes version to render Helm charts for (default "1.35.6")
+      --charts-dir string                Directory pulled Helm charts are kept in between runs (default "cache")
+      --repo-url string                  URL of the repository the checkout is of, which tells $<ref>/ value files and paths from other repositories apart (default: the repository the Application's ref sources name)
+      --kustomize-build-options string   Flags for kustomize build, as argocd-cm's kustomize.buildOptions: --enable-helm (runs the helm binary), --helm-command <binary>, --load-restrictor LoadRestrictionsNone or LoadRestrictionsRootOnly
+      --skip-unrenderable                Skip sources ArgoCD would reject, or that can't be placed in the checkout, with a warning instead of failing; plugin sources are always skipped
+      --rendered-dir string              Keep the rendered manifests of both sides here, as base/ and head/, for other tools to scan (default: a temporary directory)
+      --report string                    HTML report to write (default "diff.html")
+      --summary string                   Markdown summary to write, for a pull request comment (default: none)
+      --context int                      Unchanged lines the report keeps around each change (default 3)
+      --full-text-limit int              Largest modified file, in lines, whose whole text the report embeds so context can be expanded (-1: never) (default 2000)
+      --title string                     Title of the report (default: "<repo> #<pr-number>", or the two paths)
+      --repo string                      Repository as owner/name, shown in the report header (default: $GITHUB_REPOSITORY)
+      --pr-number int                    Pull request number, shown in the report header (default: from $GITHUB_REF or $GITHUB_PR_NUMBER)
+      --pr-title string                  Pull request title, shown in the report header
+      --pr-url string                    Link from the report header to the pull request (default: github.com/<repo>/pull/<pr-number>)
+      --base-ref string                  Base branch, shown in the report header (default: $GITHUB_BASE_REF)
+      --head-ref string                  Head branch, shown in the report header (default: $GITHUB_HEAD_REF)
+      --author string                    Pull request author, shown in the report header
+  -h, --help                             help for argocd-diff
+  -v, --version                          version for argocd-diff
+
 Use "argocd-diff [command] --help" for more information about a command.
 ```
  
@@ -250,27 +280,35 @@ current directory.
 ```console
 $ argocd-diff hydrate --help
 Render the ArgoCD Applications of one checkout into the Kubernetes manifests
-they would deploy, without an ArgoCD instance. Helm charts are pulled from
-their repository or read from the checkout and templated, directory sources
-are read as they are, and Secret values are redacted. Source paths in the
-Applications are relative to the working directory, so run it from the
-checkout. Each application is written to
-<rendered-dir>/<application>/<namespace>/<Kind>/<name>.yaml, or
-<rendered-dir>/<application>/<Kind>/<name>.yaml for a cluster-scoped object.
- 
+they would deploy. No ArgoCD instance is needed.
+
+Helm charts are pulled from their repository, or read from the checkout,
+and templated. Directories of plain manifests are read as they are.
+Kustomizations are built. Plugin sources are skipped with a warning. Secret
+values are redacted.
+
+Source paths in the Applications, and $<ref>/ paths in valueFiles, are
+relative to the working directory, so run it from the checkout. Each
+application is written to <rendered-dir>/<application>/<namespace>/<Kind>/<name>.yaml,
+or to <rendered-dir>/<application>/<Kind>/<name>.yaml for a cluster-scoped
+object.
+
 Usage:
   argocd-diff hydrate [flags]
- 
+
 Examples:
   argocd-diff hydrate
   argocd-diff hydrate --applications manifests/applications.yaml --rendered-dir rendered --kube-version 1.35.6
- 
+
 Flags:
-      --applications string   ArgoCD Application file to render (default "applications.yaml")
-      --rendered-dir string   Directory to write the rendered manifests to (default "rendered")
-      --kube-version string   Kubernetes version to render Helm charts for (default "1.35.6")
-      --charts-dir string     Directory pulled Helm charts are kept in between runs (default "cache")
-  -h, --help                  help for hydrate
+      --applications string              ArgoCD Application file to render (default "applications.yaml")
+      --rendered-dir string              Directory to write the rendered manifests to (default "rendered")
+      --kube-version string              Kubernetes version to render Helm charts for (default "1.35.6")
+      --charts-dir string                Directory pulled Helm charts are kept in between runs (default "cache")
+      --repo-url string                  URL of the repository the checkout is of, which tells $<ref>/ value files and paths from other repositories apart (default: the repository the Application's ref sources name)
+      --kustomize-build-options string   Flags for kustomize build, as argocd-cm's kustomize.buildOptions: --enable-helm (runs the helm binary), --helm-command <binary>, --load-restrictor LoadRestrictionsNone or LoadRestrictionsRootOnly
+      --skip-unrenderable                Skip sources ArgoCD would reject, or that can't be placed in the checkout, with a warning instead of failing; plugin sources are always skipped
+  -h, --help                             help for hydrate
 ```
  
 Progress goes to stderr. On error, it prints the error once and exits with

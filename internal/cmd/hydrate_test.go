@@ -78,6 +78,49 @@ func TestHydrateWritesManifestTree(t *testing.T) {
 	}
 }
 
+// TestHydrateSkipUnrenderableFlag pins that a source ArgoCD would refuse
+// fails the command, and that --skip-unrenderable renders the other
+// applications instead.
+func TestHydrateSkipUnrenderableFlag(t *testing.T) {
+	dir := t.TempDir()
+	applications := writeFixture(t, dir)
+	bad := "---\napiVersion: argoproj.io/v1alpha1\nkind: Application\nmetadata:\n  name: bad.stage.c1\nspec:\n  source:\n    repoURL: https://github.com/example/gitops\n    path: nowhere\n    helm: {}\n    directory: {}\n"
+	f, err := os.OpenFile(applications, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(bad); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	root := New()
+	root.SetArgs([]string{"hydrate", "--applications", applications, "--rendered-dir", filepath.Join(dir, "strict")})
+	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "multiple source types set: Helm, Directory") {
+		t.Errorf("want ArgoCD's refusal, got %v", err)
+	}
+
+	out := filepath.Join(dir, "lenient")
+	root = New()
+	root.SetArgs([]string{"hydrate", "--applications", applications, "--rendered-dir", out, "--skip-unrenderable"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "web.stage.c1", "shop", "Deployment", "web.yaml")); err != nil {
+		t.Error("the valid application was not rendered")
+	}
+}
+
+func TestHydrateRefusesUnsupportedKustomizeBuildOptions(t *testing.T) {
+	root := New()
+	root.SetArgs([]string{"hydrate", "--applications", writeFixture(t, t.TempDir()), "--rendered-dir", t.TempDir(), "--kustomize-build-options", "--enable-alpha-plugins"})
+	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "--kustomize-build-options") {
+		t.Errorf("want a refusal naming the flag, got %v", err)
+	}
+}
+
 func TestHydrateMissingApplicationsFileIsAnError(t *testing.T) {
 	root := New()
 	root.SetArgs([]string{"hydrate", "--applications", filepath.Join(t.TempDir(), "missing.yaml"), "--rendered-dir", t.TempDir()})

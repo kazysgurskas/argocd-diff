@@ -1,8 +1,14 @@
 package hydrate
 
 import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/kazysgurskas/argocd-diff/internal/application"
@@ -10,10 +16,13 @@ import (
 )
 
 // renderChart templates the source's Helm chart as release in namespace. A
-// chart named by chart is pulled from its Helm repository; one at path is
-// taken from the checkout at opts.Root and, when a dependency is missing,
-// built in a scratch copy, so that the checkout is not written to.
-func renderChart(source *application.Source, release, namespace string, opts Options) (string, error) {
+// chart named by chart is pulled from its Helm repository. A chart at a
+// path is taken from the checkout at opts.Root. When one of its
+// dependencies is missing, the chart is built in a scratch copy, so that
+// nothing is written into the checkout. Value files are resolved with
+// refs, the Application's ref sources, and checkout, what is known about
+// the checkout's repository.
+func renderChart(source *application.Source, refs map[string]*application.Source, checkout checkoutRepo, release, namespace string, opts Options) (string, error) {
 	var chartDir, path string
 	var err error
 	if source.IsChart() {
@@ -33,33 +42,60 @@ func renderChart(source *application.Source, release, namespace string, opts Opt
 	}
 	// Value files resolve against the chart in the checkout, not a scratch
 	// copy of it, since they may reach outside the chart.
-	stream, err := helm.Render(path, release, namespace, opts.KubeVersion, valueFilePaths(source.ValueFiles(), chartDir, opts.Root))
+	files, err := valueFiles(source, chartDir, refs, checkout, opts)
+	if err != nil {
+		return "", err
+	}
+	stream, err := helm.Render(path, release, namespace, opts.KubeVersion, files)
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(stream), nil
 }
 
-// valueFilePaths resolves valueFiles entries as ArgoCD does: under $values/
-// they are relative to the values source's repository, the checkout at
-// root; otherwise they are relative to chartDir, the chart's directory in
-// the checkout or, for a chart pulled from a Helm repository, the chart
-// itself.
-func valueFilePaths(files []string, chartDir, root string) []string {
-	paths := make([]string, 0, len(files))
-	for _, file := range files {
-		if rel, ok := strings.CutPrefix(file, "$values/"); ok {
-			paths = append(paths, filepath.Join(root, rel))
-			continue
+// valueFiles resolves the source's valueFiles entries the way ArgoCD does
+// and returns the files to hand to Helm, in order.
+//
+// An entry without a $ prefix is relative to chartDir: the chart's
+// directory in the checkout, or the pulled chart itself for a chart from a
+// Helm repository. An entry $<ref>/<file> names the source in refs that
+// lends its files under that ref, and <file> is relative to the root of
+// that source's repository. That root is the checkout only when the ref
+// source's repository is the checkout's. So a ref source from another
+// repository cannot be rendered, and neither can any ref source while
+// nothing says which repository the checkout is of.
+//
+// Every file must exist, unless the source sets ignoreMissingValueFiles,
+// which drops a missing file as ArgoCD does.
+func valueFiles(source *application.Source, chartDir string, refs map[string]*application.Source, checkout checkoutRepo, opts Options) ([]string, error) {
+	ignoreMissing := source.Helm != nil && source.Helm.IgnoreMissingValueFiles
+	var paths []string
+	for _, file := range source.ValueFiles() {
+		path := filepath.Join(chartDir, file)
+		if strings.HasPrefix(file, "$") {
+			ref, rest, _ := strings.Cut(file, "/")
+			refSource, ok := refs[ref]
+			switch {
+			case !ok:
+				return nil, fmt.Errorf("valueFiles entry %s %w: no source has ref %q (refs: %s)",
+					file, errUnrenderable, strings.TrimPrefix(ref, "$"), strings.Join(slices.Sorted(maps.Keys(refs)), ", "))
+			case rest == "":
+				return nil, fmt.Errorf("valueFiles entry %s %w: no file follows the ref", file, errUnrenderable)
+			case checkout.ambiguous:
+				return nil, fmt.Errorf("valueFiles entry %s %w: %w; pass --repo-url", file, errUnrenderable, application.ErrAmbiguousCheckout)
+			case !application.SameRepoURL(refSource.RepoURL, checkout.url):
+				return nil, fmt.Errorf("valueFiles entry %s %w: ref %q names repository %s, which is not the checkout's %s", file, errUnrenderable, refSource.Ref, refSource.RepoURL, checkout.url)
+			}
+			path = filepath.Join(opts.Root, rest)
 		}
-		paths = append(paths, filepath.Join(chartDir, file))
+		if _, err := os.Stat(path); err != nil {
+			if ignoreMissing && errors.Is(err, fs.ErrNotExist) {
+				slog.Info("skipping missing values file", "entry", file, "path", path)
+				continue
+			}
+			return nil, fmt.Errorf("valueFiles entry %s: %w", file, err)
+		}
+		paths = append(paths, path)
 	}
-	return paths
-}
-
-// isChartDirectory reports whether dir holds a Helm chart, which ArgoCD
-// decides by the presence of Chart.yaml.
-func isChartDirectory(dir string) bool {
-	info, err := os.Stat(filepath.Join(dir, "Chart.yaml"))
-	return err == nil && !info.IsDir()
+	return paths, nil
 }

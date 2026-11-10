@@ -1,0 +1,18 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kustomizeapp
+  namespace: kustomizeapp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kustomizeapp
+  template:
+    metadata:
+      labels:
+        app: kustomizeapp
+    spec:
+      containers:
+        - name: kustomizeapp
+          image: ghcr.io/example/kustomizeapp:1.1.0

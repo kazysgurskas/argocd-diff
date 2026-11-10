@@ -12,7 +12,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kazysgurskas/argocd-diff/internal/diff"
-	"github.com/kazysgurskas/argocd-diff/internal/helm"
 	"github.com/kazysgurskas/argocd-diff/internal/hydrate"
 	"github.com/kazysgurskas/argocd-diff/internal/report"
 	"github.com/kazysgurskas/argocd-diff/internal/version"
@@ -22,9 +21,8 @@ type diffOptions struct {
 	base, head   string
 	applications string
 	// noHydrate means base and head are rendered trees, not checkouts.
-	noHydrate   bool
-	kubeVersion string
-	chartsDir   string
+	noHydrate bool
+	renderFlags
 	renderedDir string
 	report      string
 	summary     string
@@ -48,8 +46,7 @@ func addDiffFlags(cmd *cobra.Command, o *diffOptions) {
 		"ArgoCD Application file inside each checkout, as \"helm template\" of an app-of-apps chart writes it")
 	f.BoolVar(&o.noHydrate, "no-hydrate", false,
 		"Base and head are already rendered manifest trees, as \"argocd-diff hydrate\" writes them; diff them as they are")
-	f.StringVar(&o.kubeVersion, "kube-version", helm.DefaultKubeVersion, "Kubernetes version to render Helm charts for")
-	f.StringVar(&o.chartsDir, "charts-dir", defaultChartsDir, "Directory pulled Helm charts are kept in between runs")
+	addRenderFlags(cmd, &o.renderFlags)
 	f.StringVar(&o.renderedDir, "rendered-dir", "",
 		"Keep the rendered manifests of both sides here, as base/ and head/, for other tools to scan (default: a temporary directory)")
 	f.StringVar(&o.report, "report", "diff.html", "HTML report to write")
@@ -109,7 +106,10 @@ func runDiff(cmd *cobra.Command, o *diffOptions) error {
 			}
 			defer func() { _ = os.RemoveAll(rendered) }()
 		}
-		opts := hydrate.Options{ChartsDir: o.chartsDir, KubeVersion: o.kubeVersion}
+		opts, err := o.options()
+		if err != nil {
+			return err
+		}
 		var baseApps, headApps diff.Applications
 		if baseDir, baseApps, err = hydrateSide(baseDir, filepath.Join(rendered, "base"), o.applications, opts); err != nil {
 			return fmt.Errorf("base: %w", err)

@@ -1,6 +1,7 @@
-# Three ArgoCD Applications, two with directory sources and one with a Helm
-# chart at a path, as the root chart of a GitOps repo would render them.
-# Paths are relative to this directory, the checkout.
+# Four ArgoCD Applications, as the root chart of a GitOps repo would render
+# them: two directory sources, a Helm chart at a path with a values file lent
+# by a ref source, and a kustomization. Paths are relative to this directory,
+# the checkout.
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -43,11 +44,29 @@ spec:
   destination:
     name: cluster-1
     namespace: chartapp
+  sources:
+    - repoURL: https://github.com/example/gitops
+      targetRevision: HEAD
+      path: chartapp
+      helm:
+        releaseName: chartapp
+        valueFiles:
+          - values-stage.yaml
+          - $values/overrides/chartapp.yaml
+    - repoURL: https://github.com/example/gitops
+      targetRevision: HEAD
+      ref: values
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kustomizeapp.stage.cluster-1
+spec:
+  project: stage
+  destination:
+    name: cluster-1
+    namespace: kustomizeapp
   source:
     repoURL: https://github.com/example/gitops
     targetRevision: HEAD
-    path: chartapp
-    helm:
-      releaseName: chartapp
-      valueFiles:
-        - values-stage.yaml
+    path: kustomizeapp

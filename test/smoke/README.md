@@ -9,18 +9,20 @@ open .../test/smoke/out/example/diff.html
 ```
 
 `example/` is committed: `base/` and `head/` are two checkouts of a GitOps
-repository, each with an `applications.yaml` of two directory-source
-applications and one Helm chart at a path, and the script runs the
-one-command form that hydrates both and diffs them. The scenario is an
-Ingress to Gateway API migration in `myapp` (an `Ingress` deleted, an
-`HTTPRoute`, `ServiceAccount`, `PodDisruptionBudget` and `NetworkPolicy`
-added, a `Deployment`, `Service`, `ConfigMap`, `Secret` and
+repository, each with an `applications.yaml` of four applications, and the
+script runs the one-command form that hydrates both and diffs them. The
+scenario is an Ingress to Gateway API migration in `myapp` (an `Ingress`
+deleted, an `HTTPRoute`, `ServiceAccount`, `PodDisruptionBudget` and
+`NetworkPolicy` added, a `Deployment`, `Service`, `ConfigMap`, `Secret` and
 `HorizontalPodAutoscaler` modified), an image bump in `otherapp`, and in
-`chartapp` an image and replica bump through `values-stage.yaml` (a
-`Deployment` modified) plus a `ServiceAccount` added. `chartapp` depends on
-the `common` library chart next to it through `file://`, so each run builds
-that dependency in a temporary copy of the chart; the example itself is left
-as it is.
+`chartapp` an image and replica bump through `values-stage.yaml` and a memory
+limit bump through `overrides/chartapp.yaml`, a file lent by the `ref: values`
+source (a `Deployment` modified), plus a `ServiceAccount` added. `chartapp`
+depends on the `common` library chart next to it through `file://`, so each
+run builds that dependency in a temporary copy of the chart; the example
+itself is left as it is. `kustomizeapp` holds a `kustomization.yaml`, so it is
+detected as Kustomize and built with the kustomize library; its image bump is
+one more `Deployment` modified.
 
 Everything the run produces goes under `out/` (the rendered trees as `base/`
 and `head/`, `diff.html` and `diff.md`) and `cache/`, which are gitignored, as
