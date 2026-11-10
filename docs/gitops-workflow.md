@@ -118,7 +118,7 @@ jobs:
           version: '3.17.0'
 
       - name: Setup argocd-diff
-        uses: kazysgurskas/argocd-diff@v1.1.0
+        uses: kazysgurskas/argocd-diff@v1.2.0
 
       # The base and the head of the pull request, each in its own
       # directory, each with its Application resources rendered into
@@ -256,7 +256,7 @@ jobs:
 ## Notes
 
 **Pin actions by commit SHA** in a real repository. The tags above are for
-readability. The argocd-diff action then needs `with: version: v1.1.0`, since
+readability. The argocd-diff action then needs `with: version: v1.2.0`, since
 a SHA says nothing about the release to install.
 
 **Rendering only the changed applications** keeps a run short on a
