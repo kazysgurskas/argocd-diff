@@ -56,7 +56,7 @@ go install github.com/kazysgurskas/argocd-diff/cmd/argocd-diff@latest
 as `ghcr.io/kazysgurskas/argocd-diff:<version>-amd64` and `-arm64`.
  
 ```bash
-docker run --rm ghcr.io/kazysgurskas/argocd-diff:1.0.0-amd64 --version
+docker run --rm ghcr.io/kazysgurskas/argocd-diff:1.2.0-amd64 --version
 ```
  
 **GitHub Actions:** use this repo as an action. See
@@ -293,7 +293,7 @@ tag you reference:
     for side in base head; do
       helm template "$side" > "$side/applications.yaml"
     done
-- uses: kazysgurskas/argocd-diff@v1.1.0
+- uses: kazysgurskas/argocd-diff@v1.2.0
 - run: argocd-diff --summary diff.md --pr-title "$PR_TITLE" --author "$AUTHOR"
   env:
     PR_TITLE: ${{ github.event.pull_request.title }}
@@ -303,9 +303,9 @@ tag you reference:
 If you pin the action to a commit SHA, tell it which release to install:
  
 ```yaml
-- uses: kazysgurskas/argocd-diff@<sha> # v1.1.0
+- uses: kazysgurskas/argocd-diff@<sha> # v1.2.0
   with:
-    version: v1.1.0
+    version: v1.2.0
 ```
  
 Then publish `diff.html` somewhere reviewers can open it (e.g. a workflow artifact
