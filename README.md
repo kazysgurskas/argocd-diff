@@ -28,7 +28,7 @@ them, and produces:
  
 - a self-contained **HTML report** for reviewers
 - a **Markdown summary** to post as a PR comment
-![The HTML report: changed manifests grouped by application, with filters by status, application and kind, and a unified diff with intra-line highlighting](docs/report.png)
+![The HTML report: an overview of the applications and kinds a change touches, a sidebar of changed manifests grouped by application, and a unified diff with intra-line highlighting](docs/report.png)
  
 ### What's supported
  
@@ -201,13 +201,22 @@ Use "argocd-diff [command] --help" for more information about a command.
  
 ## The report
  
-The report groups changed files by application. You get:
+The report opens with an overview: how many manifests change, in which
+applications and clusters, and which kinds. Below it, the changed files are
+grouped by application. You get:
  
 - unified or side-by-side view
 - expandable context around each change
 - filters by status, application, project, cluster and kind
 - highlighting of changes within a line
+- folding of repeated changes: when several files carry the same change, as
+  after a chart bump on many clusters, each one says so and the report can
+  close all but the first
+- a link to each file: the address bar follows the file you jump to
 - dark mode and keyboard navigation
+
+The page loads nothing from the network, fonts included.
+
 Only `.yaml` and `.yml` files are included.
  
 ### Header
@@ -356,7 +365,8 @@ For a complete example, see the workflow in
  
 `make smoke` runs argocd-diff against the example in
 [`test/smoke/`](test/smoke/) (two checkouts of a small GitOps repo) and
-writes `test/smoke/out/example/diff.html`. To try it with your own
+writes `test/smoke/out/example/diff.html`. `./test/smoke/run.sh fleet` runs
+a second example, a rollout to four clusters. To try it with your own
 scenarios, see [test/smoke/README.md](test/smoke/README.md).
  
 ## Docker

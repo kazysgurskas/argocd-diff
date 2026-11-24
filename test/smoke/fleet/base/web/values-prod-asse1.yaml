@@ -1,0 +1,5 @@
+region: asia-southeast1
+replicas: 3
+autoscaling:
+  minReplicas: 3
+  maxReplicas: 12

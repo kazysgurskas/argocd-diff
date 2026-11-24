@@ -1,0 +1,20 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: report-export
+  namespace: shop
+spec:
+  schedule: "15 3 * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: export
+              image: registry.example.com/shop/report-export:1.9.0
+              args: ["--bucket", "gs://example-reports", "--format", "csv"]
+              envFrom:
+                - configMapRef:
+                    name: report-export

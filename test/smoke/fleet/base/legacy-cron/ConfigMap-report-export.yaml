@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: report-export
+  namespace: shop
+data:
+  REPORT_WINDOW: 24h
+  REPORT_TIMEZONE: UTC

@@ -1,0 +1,110 @@
+# The Applications a fleet rollout touches: one chart deployed to four
+# clusters, cluster-wide platform objects, and one application per side that
+# the other side does not have. Paths are relative to this directory, the
+# checkout.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: web.stage.euw3
+spec:
+  project: stage
+  destination:
+    name: euw3-stage
+    namespace: shop
+  source:
+    repoURL: https://github.com/example/gitops
+    targetRevision: HEAD
+    path: web
+    helm:
+      releaseName: web
+      valueFiles:
+        - values-stage-euw3.yaml
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: web.prod.euw2
+spec:
+  project: prod
+  destination:
+    name: euw2-prod
+    namespace: shop
+  source:
+    repoURL: https://github.com/example/gitops
+    targetRevision: HEAD
+    path: web
+    helm:
+      releaseName: web
+      valueFiles:
+        - values-prod-euw2.yaml
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: web.prod.usc1
+spec:
+  project: prod
+  destination:
+    name: usc1-prod
+    namespace: shop
+  source:
+    repoURL: https://github.com/example/gitops
+    targetRevision: HEAD
+    path: web
+    helm:
+      releaseName: web
+      valueFiles:
+        - values-prod-usc1.yaml
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: web.prod.asse1
+spec:
+  project: prod
+  destination:
+    name: asse1-prod
+    namespace: shop
+  source:
+    repoURL: https://github.com/example/gitops
+    targetRevision: HEAD
+    path: web
+    helm:
+      releaseName: web
+      valueFiles:
+        - values-prod-asse1.yaml
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform.prod.euw2
+spec:
+  project: platform
+  destination:
+    name: euw2-prod
+    namespace: shop
+  source:
+    repoURL: https://github.com/example/gitops
+    targetRevision: HEAD
+    path: platform
+    directory:
+      recurse: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: alerts.prod.euw2
+spec:
+  project: platform
+  destination:
+    name: euw2-prod
+    namespace: shop
+  source:
+    repoURL: https://github.com/example/gitops
+    targetRevision: HEAD
+    path: alerts
+    helm:
+      releaseName: alerts
+      valueFiles:
+        - values.yaml
