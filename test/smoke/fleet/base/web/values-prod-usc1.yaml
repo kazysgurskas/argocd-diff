@@ -1,0 +1,5 @@
+region: us-central1
+replicas: 4
+autoscaling:
+  minReplicas: 4
+  maxReplicas: 16

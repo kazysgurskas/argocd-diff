@@ -24,6 +24,24 @@ itself is left as it is. `kustomizeapp` holds a `kustomization.yaml`, so it is
 detected as Kustomize and built with the kustomize library; its image bump is
 one more `Deployment` modified.
 
+```console
+$ ./test/smoke/run.sh fleet
+open .../test/smoke/out/fleet/diff.html
+```
+
+`fleet/` is a second committed scenario, made to show the report on a change
+that reaches several clusters. One `web` chart is deployed to a stage cluster
+and three prod clusters, each with its own values file. The head checkout
+bumps the image, adds zone spreading and a `PodDisruptionBudget` in the
+chart, and raises the replicas of one prod cluster. So most files repeat a
+change another file already shows, which the report folds, and one
+`Deployment` and one `HorizontalPodAutoscaler` differ from the rest. Around
+it are a `ClusterRole` and a `Namespace`, which are cluster-scoped, an
+application that only base has (two files deleted), and one that only head
+has: a `PrometheusRule` of more than 400 lines, which the report cuts off
+until asked. A `ConfigMap` line is long enough to need wrapping. The
+`pr-title` file in a scenario directory sets the title in the report header.
+
 Everything the run produces goes under `out/` (the rendered trees as `base/`
 and `head/`, `diff.html` and `diff.md`) and `cache/`, which are gitignored, as
 is `local/`: put your own scenarios there, for example two checkouts of a real

@@ -1,0 +1,20 @@
+image:
+  repository: registry.example.com/shop/web
+  tag: 4.19.0
+replicas: 2
+autoscaling:
+  minReplicas: 2
+  maxReplicas: 6
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    memory: 512Mi
+region: local
+upstreams:
+  - catalog.shop.svc.cluster.local:8080
+  - cart.shop.svc.cluster.local:8080
+  - search.shop.svc.cluster.local:8080
+podDisruptionBudget:
+  maxUnavailable: 1

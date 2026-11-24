@@ -1,0 +1,19 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ .Release.Name }}-web-latency
+  namespace: {{ .Release.Namespace }}
+spec:
+  groups:
+    {{- range $route := .Values.routes }}
+    - name: web-latency-{{ $route }}
+      rules:
+        {{- range $percentile := $.Values.percentiles }}
+        - alert: WebLatencyP{{ $percentile }}High
+          expr: histogram_quantile(0.{{ $percentile }}, sum by (le) (rate(http_request_duration_seconds_bucket{app="web", route="{{ $route }}"}[5m]))) > 0.{{ $percentile }}
+          for: 10m
+          labels:
+            severity: {{ ternary "page" "ticket" (eq $percentile 99) }}
+            route: {{ $route }}
+        {{- end }}
+    {{- end }}

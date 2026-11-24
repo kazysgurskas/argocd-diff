@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+data:
+  LOG_LEVEL: info
+  UPSTREAMS: {{ join "," .Values.upstreams | quote }}
+  CONTENT_SECURITY_POLICY: "default-src 'self'; img-src 'self' https://cdn.example.com https://images.example.com data:; script-src 'self' https://cdn.example.com; style-src 'self' 'unsafe-inline'; connect-src 'self' https://api.example.com https://search.example.com; frame-ancestors 'none'"

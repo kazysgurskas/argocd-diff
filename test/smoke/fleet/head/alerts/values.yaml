@@ -1,0 +1,4 @@
+# One latency alert per route, so the rendered rule is long enough for the
+# report to cut it off.
+routes: [home, search, category, product, reviews, cart, checkout, payment, account, orders, returns, wishlist, login, signup, help, sitemap]
+percentiles: [50, 90, 95, 99]
