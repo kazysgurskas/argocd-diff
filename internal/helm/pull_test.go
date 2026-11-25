@@ -6,7 +6,7 @@ func TestIsOCI(t *testing.T) {
 	tests := map[string]bool{
 		"oci://ghcr.io/stefanprodan/charts":                    true,
 		"ghcr.io/stefanprodan/charts":                          true,
-		"europe-west2-docker.pkg.dev/hostinger-systems/charts": true,
+		"europe-west2-docker.pkg.dev/exampleco-systems/charts": true,
 		"https://charts.jetstack.io":                           false,
 		"http://charts.example.com/stable":                     false,
 		"podinfo":                                              false,
