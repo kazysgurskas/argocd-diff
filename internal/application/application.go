@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -181,16 +182,21 @@ func (app *Application) RefSources() (map[string]*Source, error) {
 var ErrAmbiguousCheckout = errors.New("the ref sources name different repositories and none of them is values, so which one the checkout is cannot be told")
 
 // CheckoutRepoURL is the repository the Application is rendered from, as
-// far as its ref sources tell. It is the repository they all name. When
-// they disagree, it is the one the source with ref values names, since
-// that is the convention for the GitOps repository itself. It is empty
-// when the Application has no ref source: then nothing says, and nothing
-// needs to. When the ref sources disagree and none is values, the error is
-// ErrAmbiguousCheckout.
-func (app *Application) CheckoutRepoURL() (string, error) {
+// far as its ref sources tell. A ref source from a repository in
+// refRepoURLs is not counted, since that repository is checked out
+// somewhere else. The result is the repository the counted ref sources all
+// name. When they disagree, it is the one the source with ref values
+// names, since that is the convention for the GitOps repository itself. It
+// is empty when no ref source is counted: then nothing says. When the ref
+// sources disagree and none is values, the error is ErrAmbiguousCheckout.
+func (app *Application) CheckoutRepoURL(refRepoURLs []string) (string, error) {
 	url, values, conflict := "", "", false
 	for _, source := range app.Sources() {
 		if source.Ref == "" {
+			continue
+		}
+		isRefRepo := func(refRepoURL string) bool { return SameRepoURL(refRepoURL, source.RepoURL) }
+		if slices.ContainsFunc(refRepoURLs, isRefRepo) {
 			continue
 		}
 		if source.Ref == "values" {

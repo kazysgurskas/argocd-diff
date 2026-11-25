@@ -9,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"path/filepath"
+	"slices"
 
 	"github.com/kazysgurskas/argocd-diff/internal/application"
 	"github.com/kazysgurskas/argocd-diff/internal/kustomize"
@@ -17,15 +19,21 @@ import (
 
 // Options tune a render.
 type Options struct {
-	// Root is the directory that source paths and value files are relative
-	// to: the checkout of the GitOps repository. Empty means the working
-	// directory.
+	// Root is the checkout of the GitOps repository. Source paths are
+	// relative to it, and so are value files, except the $<ref>/ ones read
+	// from RefRepos. Empty means the working directory.
 	Root string
 	// RepoURL is the repository the checkout is of. It tells which $<ref>/
 	// value files and which paths are in the checkout, and which belong to
-	// another repository. Empty means the repository the Application's ref
-	// sources name.
+	// another repository. Empty means the repository named by the
+	// Application's ref sources that are not from RefRepos.
 	RepoURL string
+	// RefRepos maps the URL of another repository to a directory holding a
+	// checkout of it. The $<ref>/ value files that a ref source from that
+	// repository lends are read from the directory. RepoURL must not be
+	// among the keys, and no two keys may name the same repository, as
+	// application.SameRepoURL compares them.
+	RefRepos map[string]string
 	// ChartsDir is where pulled charts are kept between runs.
 	ChartsDir string
 	// KubeVersion is the Kubernetes version charts are rendered for.
@@ -46,12 +54,14 @@ var errUnrenderable = errors.New("cannot be rendered")
 // checkoutRepo is what is known about the repository the checkout at
 // Options.Root is of.
 type checkoutRepo struct {
-	// url is the repository, or empty when nothing says which it is. That
-	// is fine: an Application without ref sources has nothing to tell apart.
+	// url is the repository, or empty when nothing says which it is: the
+	// Application has no ref source outside Options.RefRepos. Every path
+	// source is then read from the checkout.
 	url string
-	// ambiguous means the Application's ref sources name different
-	// repositories and none of them is values, so the checkout could be any
-	// of them. Only Options.RepoURL can settle it.
+	// ambiguous means the Application's ref sources outside
+	// Options.RefRepos name different repositories and none of them is
+	// values, so the checkout could be any of them. Options.RepoURL settles
+	// it.
 	ambiguous bool
 }
 
@@ -62,11 +72,13 @@ type checkoutRepo struct {
 // named by chart is pulled from its Helm repository. Every other source is
 // a path in the checkout at opts.Root. The checkout belongs to one
 // repository: opts.RepoURL when set, otherwise the repository the
-// Application's ref sources name. A path in another repository is not in
-// the checkout, so that source is skipped with a warning. When the ref
-// sources name different repositories and none of them is values, nothing
-// says which one the checkout is, so a path source cannot be rendered
-// until opts.RepoURL says.
+// Application's ref sources name. A ref source from a repository in
+// opts.RefRepos is not counted there, since that repository is not the
+// checkout's. A path in another repository is not in the checkout, so that
+// source is skipped with a warning. When the counted ref sources name
+// different repositories and none of them is values, nothing says which
+// one the checkout is, so a path source cannot be rendered until
+// opts.RepoURL says.
 //
 // The kind of a path source follows ArgoCD. A helm block or a Chart.yaml
 // makes it a Helm chart. A kustomize block or a kustomization file makes it
@@ -89,7 +101,7 @@ func Render(app application.Application, opts Options) ([]Manifest, error) {
 	}
 	checkout := checkoutRepo{url: opts.RepoURL}
 	if checkout.url == "" {
-		url, err := app.CheckoutRepoURL()
+		url, err := app.CheckoutRepoURL(slices.Collect(maps.Keys(opts.RefRepos)))
 		checkout = checkoutRepo{url: url, ambiguous: errors.Is(err, application.ErrAmbiguousCheckout)}
 	}
 	var manifests []Manifest

@@ -158,7 +158,72 @@ func TestCheckoutRepoURL(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var app Application
 			app.Spec.Sources = tt.sources
-			got, err := app.CheckoutRepoURL()
+			got, err := app.CheckoutRepoURL(nil)
+			if got != tt.want {
+				t.Errorf("CheckoutRepoURL() = %q, want %q", got, tt.want)
+			}
+			if ambiguous := errors.Is(err, ErrAmbiguousCheckout); ambiguous != tt.ambiguous || (err != nil && !ambiguous) {
+				t.Errorf("CheckoutRepoURL() error = %v, want ambiguous %t", err, tt.ambiguous)
+			}
+		})
+	}
+}
+
+// TestCheckoutRepoURLDoesNotCountRefRepos pins that a ref source from a
+// repository checked out somewhere else tells nothing about the checkout,
+// whatever its ref and whichever URL of the repository is given.
+func TestCheckoutRepoURLDoesNotCountRefRepos(t *testing.T) {
+	gitops := "https://github.com/example/gitops"
+	releases := "https://github.com/example/releases"
+	other := "https://github.com/example/other"
+	tests := []struct {
+		name        string
+		sources     []*Source
+		refRepoURLs []string
+		want        string
+		ambiguous   bool
+	}{
+		{
+			name:        "the only ref source",
+			sources:     []*Source{{RepoURL: releases, Ref: "versions"}},
+			refRepoURLs: []string{releases},
+		},
+		{
+			name:        "one of two ref sources",
+			sources:     []*Source{{RepoURL: gitops, Ref: "apps"}, {RepoURL: releases, Ref: "versions"}},
+			refRepoURLs: []string{releases},
+			want:        gitops,
+		},
+		{
+			name:        "given by its scp-like url",
+			sources:     []*Source{{RepoURL: gitops, Ref: "apps"}, {RepoURL: releases, Ref: "versions"}},
+			refRepoURLs: []string{"git@github.com:Example/Releases.git"},
+			want:        gitops,
+		},
+		{
+			name:        "the values ref source",
+			sources:     []*Source{{RepoURL: gitops, Ref: "apps"}, {RepoURL: releases, Ref: "values"}},
+			refRepoURLs: []string{releases},
+			want:        gitops,
+		},
+		{
+			name:        "the values ref source, the others disagree",
+			sources:     []*Source{{RepoURL: gitops, Ref: "apps"}, {RepoURL: other, Ref: "other"}, {RepoURL: releases, Ref: "values"}},
+			refRepoURLs: []string{releases},
+			ambiguous:   true,
+		},
+		{
+			name:        "another repository given",
+			sources:     []*Source{{RepoURL: gitops, Ref: "apps"}, {RepoURL: releases, Ref: "versions"}},
+			refRepoURLs: []string{other},
+			ambiguous:   true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var app Application
+			app.Spec.Sources = tt.sources
+			got, err := app.CheckoutRepoURL(tt.refRepoURLs)
 			if got != tt.want {
 				t.Errorf("CheckoutRepoURL() = %q, want %q", got, tt.want)
 			}
