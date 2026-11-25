@@ -178,6 +178,43 @@ func TestRootHydratesAndDiffsCheckouts(t *testing.T) {
 	}
 }
 
+// TestRootReadsRefRepoOnBothSides pins that --ref-repo names one checkout
+// of another repository, which the base and the head are both rendered
+// with, and that without it a $<ref>/ value file from that repository fails
+// the run.
+func TestRootReadsRefRepoOnBothSides(t *testing.T) {
+	dir := t.TempDir()
+	writeChartCheckout(t, filepath.Join(dir, "base"), "1")
+	writeChartCheckout(t, filepath.Join(dir, "head"), "2")
+	releases := filepath.Join(dir, "releases")
+	writeFile(t, filepath.Join(releases, "apps", "web", "version.yaml"), "tag: v2\n")
+	rendered := filepath.Join(dir, "rendered")
+	args := []string{"--base", filepath.Join(dir, "base"), "--head", filepath.Join(dir, "head"),
+		"--rendered-dir", rendered, "--report", filepath.Join(dir, "diff.html")}
+
+	root := New()
+	root.SetOut(io.Discard)
+	root.SetArgs(args)
+	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "which is not the checkout's") {
+		t.Errorf("without --ref-repo: want a refusal of the ref from another repository, got %v", err)
+	}
+
+	root = New()
+	root.SetOut(io.Discard)
+	root.SetArgs(append(args, "--ref-repo", "https://github.com/example/releases="+releases))
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for side, replicas := range map[string]string{"base": "1", "head": "2"} {
+		configMap := readFile(t, filepath.Join(rendered, side, "web", "shop", "ConfigMap", "web.yaml"))
+		for _, want := range []string{"tag: v2", `replicas: "` + replicas + `"`} {
+			if !strings.Contains(configMap, want) {
+				t.Errorf("%s: missing %q in:\n%s", side, want, configMap)
+			}
+		}
+	}
+}
+
 func TestRootRefusesPerTreeApplicationsWhenHydrating(t *testing.T) {
 	root := New()
 	root.SetOut(io.Discard)

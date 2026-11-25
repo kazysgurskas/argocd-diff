@@ -60,10 +60,7 @@ func renderChart(source *application.Source, refs map[string]*application.Source
 // directory in the checkout, or the pulled chart itself for a chart from a
 // Helm repository. An entry $<ref>/<file> names the source in refs that
 // lends its files under that ref, and <file> is relative to the root of
-// that source's repository. That root is the checkout only when the ref
-// source's repository is the checkout's. So a ref source from another
-// repository cannot be rendered, and neither can any ref source while
-// nothing says which repository the checkout is of.
+// that source's repository, which refSourceRoot finds.
 //
 // Every file must exist, unless the source sets ignoreMissingValueFiles,
 // which drops a missing file as ArgoCD does.
@@ -81,12 +78,12 @@ func valueFiles(source *application.Source, chartDir string, refs map[string]*ap
 					file, errUnrenderable, strings.TrimPrefix(ref, "$"), strings.Join(slices.Sorted(maps.Keys(refs)), ", "))
 			case rest == "":
 				return nil, fmt.Errorf("valueFiles entry %s %w: no file follows the ref", file, errUnrenderable)
-			case checkout.ambiguous:
-				return nil, fmt.Errorf("valueFiles entry %s %w: %w; pass --repo-url", file, errUnrenderable, application.ErrAmbiguousCheckout)
-			case !application.SameRepoURL(refSource.RepoURL, checkout.url):
-				return nil, fmt.Errorf("valueFiles entry %s %w: ref %q names repository %s, which is not the checkout's %s", file, errUnrenderable, refSource.Ref, refSource.RepoURL, checkout.url)
 			}
-			path = filepath.Join(opts.Root, rest)
+			root, err := refSourceRoot(refSource, checkout, opts)
+			if err != nil {
+				return nil, fmt.Errorf("valueFiles entry %s %w: %w", file, errUnrenderable, err)
+			}
+			path = filepath.Join(root, rest)
 		}
 		if _, err := os.Stat(path); err != nil {
 			if ignoreMissing && errors.Is(err, fs.ErrNotExist) {
@@ -98,4 +95,22 @@ func valueFiles(source *application.Source, chartDir string, refs map[string]*ap
 		paths = append(paths, path)
 	}
 	return paths, nil
+}
+
+// refSourceRoot returns the root of the repository whose files source lends
+// under its ref: the directory opts.RefRepos gives for that repository,
+// otherwise opts.Root when it is the checkout's, otherwise an error.
+func refSourceRoot(source *application.Source, checkout checkoutRepo, opts Options) (string, error) {
+	for url, dir := range opts.RefRepos {
+		if application.SameRepoURL(url, source.RepoURL) {
+			return dir, nil
+		}
+	}
+	switch {
+	case checkout.ambiguous:
+		return "", fmt.Errorf("%w; pass --repo-url", application.ErrAmbiguousCheckout)
+	case !application.SameRepoURL(source.RepoURL, checkout.url):
+		return "", fmt.Errorf("ref %q names repository %s, which is not the checkout's %s", source.Ref, source.RepoURL, checkout.url)
+	}
+	return opts.Root, nil
 }

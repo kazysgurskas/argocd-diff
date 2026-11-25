@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -23,6 +24,7 @@ type renderFlags struct {
 	kubeVersion           string
 	chartsDir             string
 	repoURL               string
+	refRepos              []string
 	kustomizeBuildOptions string
 	skipUnrenderable      bool
 }
@@ -34,25 +36,67 @@ func addRenderFlags(cmd *cobra.Command, r *renderFlags) {
 	f.StringVar(&r.chartsDir, "charts-dir", defaultChartsDir, "Directory pulled Helm charts are kept in between runs")
 	f.StringVar(&r.repoURL, "repo-url", "",
 		"URL of the repository the checkout is of, which tells $<ref>/ value files and paths from other repositories apart (default: the repository the Application's ref sources name)")
+	f.StringArrayVar(&r.refRepos, "ref-repo", nil,
+		"Checkout of another repository to read $<ref>/ value files from, as `<url>=<dir>`: a ref source from <url> lends the files in <dir> and is not counted when the checkout's repository is worked out, so <url> cannot also be --repo-url; may be repeated")
 	f.StringVar(&r.kustomizeBuildOptions, "kustomize-build-options", "",
 		"Flags for kustomize build, as argocd-cm's kustomize.buildOptions: --enable-helm (runs the helm binary), --helm-command <binary>, --load-restrictor LoadRestrictionsNone or LoadRestrictionsRootOnly")
 	f.BoolVar(&r.skipUnrenderable, "skip-unrenderable", false,
 		"Skip sources ArgoCD would reject, or that can't be placed in the checkout, with a warning instead of failing; plugin sources are always skipped")
 }
 
-// options turns the rendering flags into hydrate options.
+// options turns the rendering flags into hydrate options. It refuses a
+// repository that --repo-url and --ref-repo both name, since the checkout's
+// repository cannot be another repository as well.
 func (r *renderFlags) options() (hydrate.Options, error) {
 	build, err := kustomize.ParseBuildOptions(r.kustomizeBuildOptions)
 	if err != nil {
 		return hydrate.Options{}, fmt.Errorf("--kustomize-build-options: %w", err)
 	}
+	refRepos, err := parseRefRepos(r.refRepos)
+	if err != nil {
+		return hydrate.Options{}, fmt.Errorf("--ref-repo: %w", err)
+	}
+	for url := range refRepos {
+		if r.repoURL != "" && application.SameRepoURL(url, r.repoURL) {
+			return hydrate.Options{}, fmt.Errorf("--ref-repo and --repo-url both name %s; --ref-repo is for repositories other than the checkout's", url)
+		}
+	}
 	return hydrate.Options{
 		ChartsDir:        r.chartsDir,
 		KubeVersion:      r.kubeVersion,
 		RepoURL:          r.repoURL,
+		RefRepos:         refRepos,
 		Kustomize:        build,
 		SkipUnrenderable: r.skipUnrenderable,
 	}, nil
+}
+
+// parseRefRepos turns --ref-repo values, each <url>=<dir>, into the
+// directory that holds the checkout of each repository. It refuses a value
+// of another form, a <dir> that is not a directory, and a repository given
+// twice, since nothing says which of its two directories to read.
+func parseRefRepos(values []string) (map[string]string, error) {
+	refRepos := make(map[string]string, len(values))
+	for _, value := range values {
+		url, dir, ok := strings.Cut(value, "=")
+		if !ok || url == "" || dir == "" {
+			return nil, fmt.Errorf("%q is not of the form <url>=<dir>", value)
+		}
+		for given := range refRepos {
+			if application.SameRepoURL(given, url) {
+				return nil, fmt.Errorf("%s and %s name the same repository", given, url)
+			}
+		}
+		info, err := os.Stat(dir)
+		if err != nil {
+			return nil, fmt.Errorf("checkout of %s: %w", url, err)
+		}
+		if !info.IsDir() {
+			return nil, fmt.Errorf("checkout of %s: %s is not a directory", url, dir)
+		}
+		refRepos[url] = dir
+	}
+	return refRepos, nil
 }
 
 type hydrateOptions struct {
@@ -74,10 +118,11 @@ and templated. Directories of plain manifests are read as they are.
 Kustomizations are built. Plugin sources are skipped with a warning. Secret
 values are redacted.
 
-Source paths in the Applications, and $<ref>/ paths in valueFiles, are
-relative to the working directory, so run it from the checkout. Each
-application is written to <rendered-dir>/<application>/<namespace>/<Kind>/<name>.yaml,
-or to <rendered-dir>/<application>/<Kind>/<name>.yaml for a cluster-scoped
+Source paths in the Applications are relative to the working directory, so
+run it from the checkout. So are $<ref>/ paths in valueFiles, unless the
+ref source's repository is given with --ref-repo. Each application is
+written to <rendered-dir>/<application>/<namespace>/<Kind>/<name>.yaml, or
+to <rendered-dir>/<application>/<Kind>/<name>.yaml for a cluster-scoped
 object.`,
 		Example: `  argocd-diff hydrate
   argocd-diff hydrate --applications manifests/applications.yaml --rendered-dir rendered --kube-version 1.35.6`,

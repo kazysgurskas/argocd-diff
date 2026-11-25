@@ -3,9 +3,11 @@ package hydrate
 import (
 	"bytes"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -13,7 +15,10 @@ import (
 	"github.com/kazysgurskas/argocd-diff/internal/helm"
 )
 
-const gitops = "https://github.com/example/gitops"
+const (
+	gitops   = "https://github.com/example/gitops"
+	releases = "https://github.com/example/releases"
+)
 
 // webChart is a chart whose ConfigMap prints the greeting and replicas
 // values, for tests that check which value files were applied.
@@ -293,6 +298,95 @@ func TestRenderRefusesRefFromAnotherRepository(t *testing.T) {
 	}
 }
 
+// TestRenderReadsRefFromRefRepos pins that a $<ref>/ file lent by a source
+// from another repository is read from the checkout of that repository in
+// RefRepos, next to the value files of the checkout itself, and that a file
+// missing there always fails the render, as one missing from the checkout
+// does.
+func TestRenderReadsRefFromRefRepos(t *testing.T) {
+	root, releasesDir := t.TempDir(), t.TempDir()
+	writeTree(t, root, webChart)
+	writeTree(t, root, map[string]string{"apps/web/values.yaml": "replicas: 3\n"})
+	writeTree(t, releasesDir, map[string]string{"apps/web/version.yaml": "greeting: released\n"})
+	var app application.Application
+	app.Metadata.Name = "web"
+	app.Spec.Sources = []*application.Source{
+		{RepoURL: gitops, Path: "charts/web", Helm: &application.HelmSource{ValueFiles: []string{"$values/apps/web/values.yaml", "$versions/apps/web/version.yaml"}}},
+		{RepoURL: gitops, Ref: "values"},
+		{RepoURL: releases, Ref: "versions"},
+	}
+	opts := Options{Root: root, KubeVersion: helm.DefaultKubeVersion, RefRepos: map[string]string{releases: releasesDir}}
+	manifests, err := Render(app, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifests) != 1 {
+		t.Fatalf("rendered %d manifests, want 1", len(manifests))
+	}
+	for _, want := range []string{"greeting: released", `replicas: "3"`} {
+		if !strings.Contains(manifests[0].Content, want) {
+			t.Errorf("missing %q in:\n%s", want, manifests[0].Content)
+		}
+	}
+
+	app.Spec.Sources[0].Helm.ValueFiles = []string{"$versions/apps/web/missing.yaml"}
+	for _, skip := range []bool{false, true} {
+		opts.SkipUnrenderable = skip
+		_, err := Render(app, opts)
+		if !errors.Is(err, fs.ErrNotExist) || !strings.Contains(err.Error(), "valueFiles entry $versions/apps/web/missing.yaml") {
+			t.Errorf("SkipUnrenderable=%v: want an error naming the entry, got %v", skip, err)
+		}
+	}
+}
+
+// TestRenderDoesNotTakeRefRepoForCheckout pins that a ref source from a
+// repository in RefRepos is not counted when the checkout's repository is
+// worked out from the ref sources. So the path source in the GitOps
+// repository still renders when that ref source is the only one, when it is
+// the values one, and when counting it would make the ref sources disagree.
+func TestRenderDoesNotTakeRefRepoForCheckout(t *testing.T) {
+	root, releasesDir := t.TempDir(), t.TempDir()
+	writeTree(t, root, webChart)
+	writeTree(t, releasesDir, map[string]string{"apps/web/version.yaml": "greeting: released\n"})
+	tests := []struct {
+		name string
+		ref  string
+		refs []*application.Source
+	}{
+		{
+			name: "the only ref source",
+			ref:  "versions",
+			refs: []*application.Source{{RepoURL: releases, Ref: "versions"}},
+		},
+		{
+			name: "the values ref source",
+			ref:  "values",
+			refs: []*application.Source{{RepoURL: gitops, Ref: "apps"}, {RepoURL: releases, Ref: "values"}},
+		},
+		{
+			name: "ref sources that disagree and none is values",
+			ref:  "versions",
+			refs: []*application.Source{{RepoURL: gitops, Ref: "apps"}, {RepoURL: releases, Ref: "versions"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var app application.Application
+			app.Metadata.Name = "web"
+			chart := &application.Source{RepoURL: gitops, Path: "charts/web", Helm: &application.HelmSource{ValueFiles: []string{"$" + tt.ref + "/apps/web/version.yaml"}}}
+			app.Spec.Sources = append([]*application.Source{chart}, tt.refs...)
+			opts := Options{Root: root, KubeVersion: helm.DefaultKubeVersion, RefRepos: map[string]string{releases: releasesDir}}
+			manifests, err := Render(app, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(manifests) != 1 || !strings.Contains(manifests[0].Content, "greeting: released") {
+				t.Errorf("manifests = %+v, want the chart rendered with the released greeting", manifests)
+			}
+		})
+	}
+}
+
 // TestRenderMatchesSSHAndHTTPSForms pins that the SSH and HTTPS URLs of
 // one repository name the same checkout: ref sources that mix them agree,
 // and an HTTPS --repo-url matches Applications written with SSH.
@@ -442,5 +536,117 @@ func TestValueFiles(t *testing.T) {
 	source.Helm.ValueFiles = []string{"missing.yaml"}
 	if _, err := valueFiles(source, chartDir, refs, checkoutRepo{url: gitops}, Options{Root: root}); err == nil {
 		t.Error("a missing file must be an error")
+	}
+}
+
+// TestValueFilesFromRefRepos pins where a $<ref>/ entry is read from when
+// RefRepos has the repository of its ref source: the directory given for
+// it, under any URL of the repository, even while nothing says which
+// repository the checkout is of. Without one, the entry is refused as
+// before.
+func TestValueFilesFromRefRepos(t *testing.T) {
+	root, releasesDir := t.TempDir(), t.TempDir()
+	writeTree(t, root, map[string]string{"apps/web/values.yaml": "a: 1\n"})
+	writeTree(t, releasesDir, map[string]string{
+		"apps/web/values.yaml":  "a: 2\n",
+		"apps/web/version.yaml": "a: 3\n",
+	})
+	refs := map[string]*application.Source{
+		"$apps":     {RepoURL: gitops, Ref: "apps"},
+		"$versions": {RepoURL: releases, Ref: "versions"},
+	}
+	inCheckout := []string{filepath.Join(root, "apps/web/values.yaml")}
+	inRefRepo := []string{filepath.Join(releasesDir, "apps/web/version.yaml")}
+	tests := []struct {
+		name          string
+		file          string
+		ignoreMissing bool
+		checkout      checkoutRepo
+		refRepos      map[string]string
+		want          []string
+		wantErr       error
+		wantMessage   string
+	}{
+		{
+			name:     "ref repo given",
+			file:     "$versions/apps/web/version.yaml",
+			checkout: checkoutRepo{url: gitops},
+			refRepos: map[string]string{releases: releasesDir},
+			want:     inRefRepo,
+		},
+		{
+			name:     "ref repo given by its ssh url",
+			file:     "$versions/apps/web/version.yaml",
+			checkout: checkoutRepo{url: gitops},
+			refRepos: map[string]string{"git@github.com:Example/Releases.git": releasesDir},
+			want:     inRefRepo,
+		},
+		{
+			name:     "ref repo given while the checkout is ambiguous",
+			file:     "$versions/apps/web/version.yaml",
+			checkout: checkoutRepo{ambiguous: true},
+			refRepos: map[string]string{releases: releasesDir},
+			want:     inRefRepo,
+		},
+		{
+			name:     "ref source from the checkout's repository",
+			file:     "$apps/apps/web/values.yaml",
+			checkout: checkoutRepo{url: gitops},
+			refRepos: map[string]string{releases: releasesDir},
+			want:     inCheckout,
+		},
+		{
+			name:        "file missing from the ref repo",
+			file:        "$versions/apps/web/missing.yaml",
+			checkout:    checkoutRepo{url: gitops},
+			refRepos:    map[string]string{releases: releasesDir},
+			wantErr:     fs.ErrNotExist,
+			wantMessage: "valueFiles entry $versions/apps/web/missing.yaml: ",
+		},
+		{
+			name:          "file missing from the ref repo and ignored",
+			file:          "$versions/apps/web/missing.yaml",
+			ignoreMissing: true,
+			checkout:      checkoutRepo{url: gitops},
+			refRepos:      map[string]string{releases: releasesDir},
+		},
+		{
+			name:        "no ref repo given",
+			file:        "$versions/apps/web/version.yaml",
+			checkout:    checkoutRepo{url: gitops},
+			wantErr:     errUnrenderable,
+			wantMessage: `valueFiles entry $versions/apps/web/version.yaml cannot be rendered: ref "versions" names repository ` + releases + ", which is not the checkout's " + gitops,
+		},
+		{
+			name:        "ref repo given for another repository",
+			file:        "$versions/apps/web/version.yaml",
+			checkout:    checkoutRepo{url: gitops},
+			refRepos:    map[string]string{"https://github.com/example/other": releasesDir},
+			wantErr:     errUnrenderable,
+			wantMessage: "which is not the checkout's " + gitops,
+		},
+		{
+			name:        "no ref repo given while the checkout is ambiguous",
+			file:        "$apps/apps/web/values.yaml",
+			checkout:    checkoutRepo{ambiguous: true},
+			refRepos:    map[string]string{releases: releasesDir},
+			wantErr:     errUnrenderable,
+			wantMessage: "valueFiles entry $apps/apps/web/values.yaml cannot be rendered: " + application.ErrAmbiguousCheckout.Error() + "; pass --repo-url",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			source := &application.Source{Helm: &application.HelmSource{ValueFiles: []string{tt.file}, IgnoreMissingValueFiles: tt.ignoreMissing}}
+			got, err := valueFiles(source, filepath.Join(root, "charts", "web"), refs, tt.checkout, Options{Root: root, RefRepos: tt.refRepos})
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("valueFiles() error = %v, want %v", err, tt.wantErr)
+			}
+			if err != nil && !strings.Contains(err.Error(), tt.wantMessage) {
+				t.Errorf("valueFiles() error = %v, want it to say %q", err, tt.wantMessage)
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("valueFiles() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

@@ -83,16 +83,20 @@ This writes the report to `diff.html` and the summary to `diff.md`.
 A few things worth knowing:
  
 - **Paths:** `path:` and `$<ref>/…` value files are resolved relative to the
-  checkout. ArgoCD's rules decide the source type: an explicit `helm:`,
+  checkout, unless `--ref-repo` gives another directory for a `$<ref>/…`
+  file. ArgoCD's rules decide the source type: an explicit `helm:`,
   `kustomize:`, `directory:` or `plugin:` block wins, and `chart:` means
   Helm. Otherwise the tool looks at the path: a kustomization file means
   Kustomize, a `Chart.yaml` means Helm, and anything else is treated as
   plain manifests. Plugin sources are skipped with a warning. Value files
   without a `$` prefix are relative to the chart. `$<ref>/<file>` is
   relative to the root of the repository that the matching `ref` source
-  points at, which has to be the checkout. The checkout's repository is
-  `--repo-url` when given, otherwise the one the `ref` sources name, or the
-  `ref: values` one if they disagree. If they disagree and none is
+  points at, which has to be the checkout or a repository given with
+  `--ref-repo <url>=<dir>`. A repository given that way is read from
+  `<dir>`, for base and head alike. It is never the checkout's repository,
+  so it can't also be `--repo-url`. The checkout's repository is
+  `--repo-url` when given, otherwise the one the other `ref` sources name,
+  or the `ref: values` one if they disagree. If they disagree and none is
   `ref: values`, nothing says which repository the checkout is, so path
   sources and `$<ref>/` value files can't be placed: pass `--repo-url`.
   Repositories are compared by host and path, so the HTTPS and SSH URLs of
@@ -115,13 +119,14 @@ A few things worth knowing:
   would reject. That covers setting more than one source type, `chart:` on
   a non-Helm source, `chart:` on a `ref` source, two sources sharing a
   `ref`, a `$<ref>/` value file pointing at a ref that doesn't exist or
-  isn't in the checkout, a path source or `$<ref>/` value file that can't
-  be placed because the `ref` sources disagree about the checkout, and a
-  `kustomize:` label or annotation that the kustomization already sets
-  without the force setting. Failing makes sure a broken Application
-  doesn't show up as "no changes". Use `--skip-unrenderable` to log and
-  skip these sources instead. Charts that fail to template, and
-  kustomizations that fail to build, still fail the run either way.
+  whose repository is neither the checkout's nor given with `--ref-repo`, a
+  path source or `$<ref>/` value file that can't be placed because the
+  `ref` sources disagree about the checkout, and a `kustomize:` label or
+  annotation that the kustomization already sets without the force setting.
+  Failing makes sure a broken Application doesn't show up as "no changes".
+  Use `--skip-unrenderable` to log and skip these sources instead. Charts
+  that fail to template, and kustomizations that fail to build, still fail
+  the run either way.
 - **Changing inputs and outputs:** use `--base`, `--head` and
   `--applications` for the inputs, and `--report` and `--summary` for the
   outputs.
@@ -178,6 +183,7 @@ Flags:
       --kube-version string              Kubernetes version to render Helm charts for (default "1.35.6")
       --charts-dir string                Directory pulled Helm charts are kept in between runs (default "cache")
       --repo-url string                  URL of the repository the checkout is of, which tells $<ref>/ value files and paths from other repositories apart (default: the repository the Application's ref sources name)
+      --ref-repo <url>=<dir>             Checkout of another repository to read $<ref>/ value files from, as <url>=<dir>: a ref source from <url> lends the files in <dir> and is not counted when the checkout's repository is worked out, so <url> cannot also be --repo-url; may be repeated
       --kustomize-build-options string   Flags for kustomize build, as argocd-cm's kustomize.buildOptions: --enable-helm (runs the helm binary), --helm-command <binary>, --load-restrictor LoadRestrictionsNone or LoadRestrictionsRootOnly
       --skip-unrenderable                Skip sources ArgoCD would reject, or that can't be placed in the checkout, with a warning instead of failing; plugin sources are always skipped
       --rendered-dir string              Keep the rendered manifests of both sides here, as base/ and head/, for other tools to scan (default: a temporary directory)
@@ -296,10 +302,11 @@ and templated. Directories of plain manifests are read as they are.
 Kustomizations are built. Plugin sources are skipped with a warning. Secret
 values are redacted.
 
-Source paths in the Applications, and $<ref>/ paths in valueFiles, are
-relative to the working directory, so run it from the checkout. Each
-application is written to <rendered-dir>/<application>/<namespace>/<Kind>/<name>.yaml,
-or to <rendered-dir>/<application>/<Kind>/<name>.yaml for a cluster-scoped
+Source paths in the Applications are relative to the working directory, so
+run it from the checkout. So are $<ref>/ paths in valueFiles, unless the
+ref source's repository is given with --ref-repo. Each application is
+written to <rendered-dir>/<application>/<namespace>/<Kind>/<name>.yaml, or
+to <rendered-dir>/<application>/<Kind>/<name>.yaml for a cluster-scoped
 object.
 
 Usage:
@@ -315,6 +322,7 @@ Flags:
       --kube-version string              Kubernetes version to render Helm charts for (default "1.35.6")
       --charts-dir string                Directory pulled Helm charts are kept in between runs (default "cache")
       --repo-url string                  URL of the repository the checkout is of, which tells $<ref>/ value files and paths from other repositories apart (default: the repository the Application's ref sources name)
+      --ref-repo <url>=<dir>             Checkout of another repository to read $<ref>/ value files from, as <url>=<dir>: a ref source from <url> lends the files in <dir> and is not counted when the checkout's repository is worked out, so <url> cannot also be --repo-url; may be repeated
       --kustomize-build-options string   Flags for kustomize build, as argocd-cm's kustomize.buildOptions: --enable-helm (runs the helm binary), --helm-command <binary>, --load-restrictor LoadRestrictionsNone or LoadRestrictionsRootOnly
       --skip-unrenderable                Skip sources ArgoCD would reject, or that can't be placed in the checkout, with a warning instead of failing; plugin sources are always skipped
   -h, --help                             help for hydrate
